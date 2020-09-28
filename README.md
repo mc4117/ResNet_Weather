@@ -1,1 +1,1 @@
-# GANS_models
+# NN_WeatherBench
