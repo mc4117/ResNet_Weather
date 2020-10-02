@@ -1,0 +1,14 @@
+2020-10-01 14:11:25.867310: I tensorflow/core/platform/cpu_feature_guard.cc:142] Your CPU supports instructions that this TensorFlow binary was not compiled to use: SSE4.1 SSE4.2 AVX AVX2 FMA
+2020-10-01 14:11:25.922239: I tensorflow/core/platform/profile_utils/cpu_utils.cc:94] CPU Frequency: 2250100000 Hz
+2020-10-01 14:11:25.944013: I tensorflow/compiler/xla/service/service.cc:168] XLA service 0x55af44d77990 initialized for platform Host (this does not guarantee that XLA will be used). Devices:
+2020-10-01 14:11:25.952769: I tensorflow/compiler/xla/service/service.cc:176]   StreamExecutor device (0): Host, Default Version
+2020-10-01 14:11:25.956745: I tensorflow/core/common_runtime/process_util.cc:147] Creating new thread pool with default inter op setting: 256. Tune using inter_op_parallelism_threads for best performance.
+2020-10-01 14:13:25.122041: I tensorflow/core/common_runtime/process_util.cc:147] Creating new thread pool with default inter op setting: 256. Tune using inter_op_parallelism_threads for best performance.
+WARNING:tensorflow:sample_weight modes were coerced from
+  ...
+    to  
+  ['...']
+WARNING:tensorflow:sample_weight modes were coerced from
+  ...
+    to  
+  ['...']
