@@ -12,3 +12,4 @@ WARNING:tensorflow:sample_weight modes were coerced from
   ...
     to  
   ['...']
+=>> PBS: job killed: walltime 86415 exceeded limit 86400
