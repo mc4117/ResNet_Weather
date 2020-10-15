@@ -12,14 +12,6 @@ if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
 
-def limit_mem():
-    """By default TF uses all available GPU memory. This function prevents this."""
-    config = tf.compat.v1.ConfigProto()
-    config.gpu_options.allow_growth = True
-    tf.compat.v1.Session(config=config)
-
-limit_mem()
-
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -106,12 +98,12 @@ class DataGenerator(keras.utils.Sequence):
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
+    'geopotential': ('z', [500]),
+    'temperature': ('t', [850]),
+#    'specific_humidity': ('q', [850]),
+#    '2m_temperature': ('t2m', None),
+#    'potential_vorticity': ('pv', [50, 100]),
+#    'constants': ['lsm', 'orography']
 }
 
 ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in var_dict.keys()]
@@ -186,15 +178,24 @@ class PeriodicConv2D(tf.keras.layers.Layer):
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
     
-def build_cnn(filters, kernels, input_shape, dr=0):
+def build_cnn(filters, kernels, input_shape, dr=0, fine_tune = False):
     """Fully convolutional network"""
-    x = input = Input(shape=input_shape)
+    x = input = Input(shape=input_shape)   
     for f, k in zip(filters[:-1], kernels[:-1]):
-        x = PeriodicConv2D(f, k)(x)
+        if k == 5:
+            x = PeriodicConv2D(f, k)(x)  
+        else:
+            x = PeriodicConv2D(f, k)(x)
+            x = PeriodicConv2D(f, k)(x)
+        #else:
+        #    x = BatchNormalization()(x)   
         x = LeakyReLU()(x)
-        x = BatchNormalization()(x)
-        if dr > 0: x = Dropout(dr)(x, training = True)
+        if fine_tune:
+            x = BatchNormalization()(x, training = True)        
+        if dr > 0:
+            x = Dropout(dr)(x, training = False) 
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
+    output = PeriodicConv2D(filters[-1], kernels[-1])(x)     
     return keras.models.Model(input, output)
 
 def create_predictions(model, dg):
@@ -221,14 +222,11 @@ def create_predictions(model, dg):
         das.append({v: da})
     return xr.merge(das, compat = 'override').drop('level')
 
-for i in range(6, 10):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10), dr = 0.1)
+# fit with no drop out
+cnn = build_cnn([64, 64, 64, 64, 2], [5, 3, 3, 3, 3], (32, 64, 2))
+cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
-    cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
-
-    print(cnn.summary())
-
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+cnn.fit(dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -237,21 +235,90 @@ for i in range(6, 10):
                         mode='auto'
                     )]
          )
-    #filename = '/rds/general/user/mc4117/ephemeral/saved_models/train_72_multi_data_gpu_' + str(i)
-    #cnn.save_weights(filename + '.h5')    
 
-    number_of_forecasts = 13
+# build model with dropout
+cnn_2 = build_cnn([64, 64, 64, 64, 2], [5, 3, 3, 3, 3], (32, 64, 2), dr = 0.1, fine_tune = True)
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+j = 0
+i = 0
+for k in range(len(cnn_2.layers)):
+    if type(cnn_2.layers[j]) == type(cnn.layers[i]):
+        cnn_2.layers[j].set_weights(cnn.layers[i].get_weights())
+        j += 1
+        i += 1
+    elif type(cnn_2.layers[j]) == tf.keras.layers.Dropout:
+        j += 1
+    else:
+        print("error")
+        
+cnn_2.compile(keras.optimizers.Adam(1e-5), 'mse')
 
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-    filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/train_72_multi_data_gpu_' + str(i)
-    np.save(filename_2 + '.npy', pred_ensemble)
-    
+# fine tune using smaller learning rate with do layers
+cnn_2.fit(dg_train, epochs=10, validation_data=dg_valid, 
+          callbacks=[tf.keras.callbacks.EarlyStopping(
+                        monitor='val_loss',
+                        min_delta=0,
+                        patience=2,
+                        verbose=1, 
+                        mode='auto'
+                    )]
+         )
+
+# build model without dropout and fine tune
+
+cnn_3 = build_cnn([64, 64, 64, 64, 2], [5, 3, 3, 3, 3], (32, 64, 2), fine_tune = True)
+
+j = 0
+i = 0
+for k in range(len(cnn_3.layers)):
+    if type(cnn_3.layers[j]) == type(cnn.layers[i]):
+        cnn_3.layers[j].set_weights(cnn.layers[i].get_weights())
+        j += 1
+        i += 1
+    elif type(cnn_3.layers[j]) == tf.keras.layers.Dropout:
+        j += 1
+    else:
+        print("error")
+        
+cnn_3.compile(keras.optimizers.Adam(1e-5), 'mse')
+
+# fine tune using smaller learning rate with do layers
+cnn_3.fit(dg_train, epochs=10, validation_data=dg_valid, 
+          callbacks=[tf.keras.callbacks.EarlyStopping(
+                        monitor='val_loss',
+                        min_delta=0,
+                        patience=2,
+                        verbose=1, 
+                        mode='auto'
+                    )]
+         )
+
+number_of_forecasts = 1
+
+fc = create_predictions(cnn, dg_test)
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+
+pred2 = np.asarray(fc.to_array(), dtype=np.float32).squeeze()
+pred_ensemble[:,:,:,:,0]=pred2
+filename_1 = '/rds/general/user/mc4117/ephemeral/saved_pred/no_fine_tune_2.npy'
+np.save(filename_1 + '.npy', pred_ensemble)
+
+fc_2 = create_predictions(cnn_2, dg_test)
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+
+pred2 = np.asarray(fc_2.to_array(), dtype=np.float32).squeeze()
+pred_ensemble[:,:,:,:,0]=pred2
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/fine_tune_nodo_2.npy'
+np.save(filename_2 + '.npy', pred_ensemble)
+
+fc_3 = create_predictions(cnn_3, dg_test)
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+
+pred2 = np.asarray(fc_3.to_array(), dtype=np.float32).squeeze()
+pred_ensemble[:,:,:,:,0]=pred2
+
+filename_3 = '/rds/general/user/mc4117/ephemeral/saved_pred/fine_tune_do_2.npy'
+np.save(filename_3 + '.npy', pred_ensemble)

@@ -6,6 +6,7 @@ from tensorflow.keras.layers import *
 import tensorflow.keras.backend as K
 from src.score import *
 import re
+from collections import OrderedDict
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -17,12 +18,28 @@ def limit_mem():
     config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     tf.compat.v1.Session(config=config)
-
+    
 limit_mem()
 
+DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
+
+z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
+t850_valid = load_test_data(f'{DATADIR}temperature_850', 't')
+valid = xr.merge([z500_valid, t850_valid])
+
+z = xr.open_mfdataset(f'{DATADIR}geopotential_500/*.nc', combine='by_coords')
+t = xr.open_mfdataset(f'{DATADIR}temperature_850/*.nc', combine='by_coords').drop('level')
+
+# For the data generator all variables have to be merged into a single dataset.
+datasets = [z, t]
+ds = xr.merge(datasets)
+
+# In this notebook let's only load a subset of the training data
+ds_train = ds.sel(time=slice('1979', '2016'))  
+ds_test = ds.sel(time=slice('2017', '2018'))
+
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
-                 mean=None, std=None, output_vars=None):
+    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -36,7 +53,6 @@ class DataGenerator(keras.utils.Sequence):
             mean: If None, compute mean from data.
             std: If None, compute standard deviation from data.
         """
-
         self.ds = ds
         self.var_dict = var_dict
         self.batch_size = batch_size
@@ -44,39 +60,18 @@ class DataGenerator(keras.utils.Sequence):
         self.lead_time = lead_time
 
         data = []
-        level_names = []
         generic_level = xr.DataArray([1], coords={'level': [1]}, dims=['level'])
-        for long_var, params in var_dict.items():
-            if long_var == 'constants': 
-                for var in params:
-                    data.append(ds[var].expand_dims(
-                        {'level': generic_level, 'time': ds.time}, (1, 0)
-                    ))
-                    level_names.append(var)
-            else:
-                var, levels = params
-                try:
-                    data.append(ds[var].sel(level=levels))
-                    level_names += [f'{var}_{level}' for level in levels]
-                except ValueError:
-                    data.append(ds[var].expand_dims({'level': generic_level}, 1))
-                    level_names.append(var)
+        for var, levels in var_dict.items():
+            try:
+                data.append(ds[var].sel(level=levels))
+            except ValueError:
+                data.append(ds[var].expand_dims({'level': generic_level}, 1))
 
         self.data = xr.concat(data, 'level').transpose('time', 'lat', 'lon', 'level')
-        self.data['level_names'] = xr.DataArray(
-            level_names, dims=['level'], coords={'level': self.data.level})
-        if output_vars is None:
-            self.output_idxs = range(len(dg_valid.data.level))
-        else:
-            self.output_idxs = [i for i, l in enumerate(self.data.level_names.values) 
-                                if any([bool(re.match(o, l)) for o in output_vars])]
-        
-        # Normalize
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
-#         self.std = self.data.std('time').mean(('lat', 'lon')).compute() if std is None else std
-        self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
+        self.std = self.data.std('time').mean(('lat', 'lon')).compute() if std is None else std
+        # Normalize
         self.data = (self.data - self.mean) / self.std
-        
         self.n_samples = self.data.isel(time=slice(0, -lead_time)).shape[0]
         self.init_time = self.data.isel(time=slice(None, -lead_time)).time
         self.valid_time = self.data.isel(time=slice(lead_time, None)).time
@@ -94,7 +89,7 @@ class DataGenerator(keras.utils.Sequence):
         'Generate one batch of data'
         idxs = self.idxs[i * self.batch_size:(i + 1) * self.batch_size]
         X = self.data.isel(time=idxs).values
-        y = self.data.isel(time=idxs + self.lead_time, level=self.output_idxs).values
+        y = self.data.isel(time=idxs + self.lead_time).values
         return X, y
 
     def on_epoch_end(self):
@@ -102,43 +97,21 @@ class DataGenerator(keras.utils.Sequence):
         self.idxs = np.arange(self.n_samples)
         if self.shuffle == True:
             np.random.shuffle(self.idxs)
-    
-DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
-
-var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
-}
-
-ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in var_dict.keys()]
-
-ds_whole = xr.merge(ds)
-
-ds_train = ds_whole.sel(time=slice('2014', '2015'))
-ds_valid = ds_whole.sel(time=slice('2016', '2016'))
-ds_test = ds_whole.sel(time=slice('2017', '2018'))
+            
+# then we need a dictionary for all the variables and levels we want to extract from the dataset
+dic = OrderedDict({'z': None, 't': None})
 
 bs=32
 lead_time=72
-output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
-dg_train = DataGenerator(ds_train, var_dict, lead_time, batch_size=bs, load=True, 
-                         output_vars=output_vars)
-dg_valid = DataGenerator(ds_valid, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
-                         shuffle=False, output_vars=output_vars)
+dg_train = DataGenerator(
+    ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
+dg_valid = DataGenerator(
+    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
 
-dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
-                         shuffle=False, output_vars=output_vars)
-
-X, y = dg_train[0]; 
-
-print(X.shape)
-print(y.shape)
+# Now also a generator for testing. Impartant: Shuffle must be False!
+dg_test = DataGenerator(ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -186,6 +159,33 @@ class PeriodicConv2D(tf.keras.layers.Layer):
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
     
+def create_predictions(model, dg):
+    """Create predictions for non-iterative model"""
+    preds = model.predict_generator(dg)
+    # Unnormalize
+    preds = preds * dg.std.values + dg.mean.values
+    fcs = []
+    lev_idx = 0
+    for var, levels in OrderedDict({'z': None, 't': None}).items():
+        if levels is None:
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx],
+                dims=['time', 'lat', 'lon'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon},
+                name=var
+            ))
+            lev_idx += 1
+        else:
+            nlevs = len(levels)
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx:lev_idx+nlevs],
+                dims=['time', 'lat', 'lon', 'level'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon, 'level': levels},
+                name=var
+            ))
+            lev_idx += nlevs
+    return xr.merge(fcs)
+
 def build_cnn(filters, kernels, input_shape, dr=0):
     """Fully convolutional network"""
     x = input = Input(shape=input_shape)
@@ -193,36 +193,11 @@ def build_cnn(filters, kernels, input_shape, dr=0):
         x = PeriodicConv2D(f, k)(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
-        if dr > 0: x = Dropout(dr)(x, training = True)
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
     return keras.models.Model(input, output)
-
-def create_predictions(model, dg):
-    """Create non-iterative predictions"""
-    preds = xr.DataArray(
-        model.predict_generator(dg),
-        dims=['time', 'lat', 'lon', 'level'],
-        coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
-                'level': dg.data.isel(level=dg.output_idxs).level,
-                'level_names': dg.data.isel(level=dg.output_idxs).level_names
-               },
-    )
-    # Unnormalize
-    preds = (preds * dg.std.isel(level=dg.output_idxs).values + 
-             dg.mean.isel(level=dg.output_idxs).values)
-    unique_vars = list(set([l.split('_')[0] for l in preds.level_names.values])); unique_vars
     
-    das = []
-    for v in unique_vars:
-        idxs = [i for i, vv in enumerate(preds.level_names.values) if vv.split('_')[0] in v]
-        #print(v, idxs)
-        da = preds.isel(level=idxs).squeeze().drop('level_names')
-        if not 'level' in da.dims: da.drop('level')
-        das.append({v: da})
-    return xr.merge(das, compat = 'override').drop('level')
-
-for i in range(6, 10):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10), dr = 0.1)
+for i in range(4):
+    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 2))
 
     cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
@@ -237,10 +212,10 @@ for i in range(6, 10):
                         mode='auto'
                     )]
          )
-    #filename = '/rds/general/user/mc4117/ephemeral/saved_models/train_72_multi_data_gpu_' + str(i)
-    #cnn.save_weights(filename + '.h5')    
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/train_72_whole_bn_only_gpu_' + str(i)
+    cnn.save_weights(filename + '.h5')    
 
-    number_of_forecasts = 13
+    number_of_forecasts = 1
 
     pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
     print(pred_ensemble.shape)
@@ -252,6 +227,5 @@ for i in range(6, 10):
         pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
         pred_ensemble[:,:,:,:,j]=pred2
         forecast_counter[j]=j+1
-    filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/train_72_multi_data_gpu_' + str(i)
-    np.save(filename_2 + '.npy', pred_ensemble)
-    
+        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/train_72_whole_bn_only_gpu_' + str(i)
+        np.save(filename_2 + '.npy', pred_ensemble)

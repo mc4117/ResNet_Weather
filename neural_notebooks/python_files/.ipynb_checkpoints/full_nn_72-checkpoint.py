@@ -18,8 +18,6 @@ def limit_mem():
     config.gpu_options.allow_growth = True
     tf.compat.v1.Session(config=config)
 
-limit_mem()
-
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -103,13 +101,13 @@ class DataGenerator(keras.utils.Sequence):
         if self.shuffle == True:
             np.random.shuffle(self.idxs)
     
+limit_mem()
+
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
+    'geopotential': ('z', [500]),
+    'temperature': ('t', [850]),
     'potential_vorticity': ('pv', [50, 100]),
     'constants': ['lsm', 'orography']
 }
@@ -118,7 +116,7 @@ ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in
 
 ds_whole = xr.merge(ds)
 
-ds_train = ds_whole.sel(time=slice('2014', '2015'))
+ds_train = ds_whole.sel(time=slice('2015', '2015'))
 ds_valid = ds_whole.sel(time=slice('2016', '2016'))
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
@@ -197,61 +195,28 @@ def build_cnn(filters, kernels, input_shape, dr=0):
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
     return keras.models.Model(input, output)
 
-def create_predictions(model, dg):
-    """Create non-iterative predictions"""
-    preds = xr.DataArray(
-        model.predict_generator(dg),
-        dims=['time', 'lat', 'lon', 'level'],
-        coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
-                'level': dg.data.isel(level=dg.output_idxs).level,
-                'level_names': dg.data.isel(level=dg.output_idxs).level_names
-               },
-    )
-    # Unnormalize
-    preds = (preds * dg.std.isel(level=dg.output_idxs).values + 
-             dg.mean.isel(level=dg.output_idxs).values)
-    unique_vars = list(set([l.split('_')[0] for l in preds.level_names.values])); unique_vars
-    
-    das = []
-    for v in unique_vars:
-        idxs = [i for i, vv in enumerate(preds.level_names.values) if vv.split('_')[0] in v]
-        #print(v, idxs)
-        da = preds.isel(level=idxs).squeeze().drop('level_names')
-        if not 'level' in da.dims: da.drop('level')
-        das.append({v: da})
-    return xr.merge(das, compat = 'override').drop('level')
+cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 6), dr = 0.1)
 
-for i in range(6, 10):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10), dr = 0.1)
+cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
-    cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
+print(cnn.summary())
 
-    print(cnn.summary())
+checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=True,
+    monitor='val_loss',
+    mode='min',
+    save_best_only=True)
 
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+cnn.fit(x = dg_train, epochs=30, validation_data=dg_valid, 
           callbacks=[tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
                         patience=2,
                         verbose=1, 
                         mode='auto'
-                    )]
+                    ), model_checkpoint_callback]
          )
-    #filename = '/rds/general/user/mc4117/ephemeral/saved_models/train_72_multi_data_gpu_' + str(i)
-    #cnn.save_weights(filename + '.h5')    
 
-    number_of_forecasts = 13
-
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
-
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-    filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/train_72_multi_data_gpu_' + str(i)
-    np.save(filename_2 + '.npy', pred_ensemble)
-    
+cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/train_72_multi_data_gpu.h5')

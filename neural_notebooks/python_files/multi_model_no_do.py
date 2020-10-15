@@ -213,7 +213,7 @@ def create_predictions(model, dg):
     return xr.merge(das, compat = 'override').drop('level')
 
 for i in range(4):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10))
+    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 2))
 
     cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
