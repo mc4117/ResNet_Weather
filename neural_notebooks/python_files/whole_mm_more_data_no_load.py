@@ -25,29 +25,12 @@ var_dict = {
     'constants': ['lsm', 'orography']
 }
 
-ds_list = []
-
-for long_var, params in var_dict.items():
-    if long_var == 'constants':
-        ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-    else:
-        var, levels = params
-        if levels is not None:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords').sel(level = levels))
-        else:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-
-print('got here')
-
-ds_whole = xr.merge(ds_list)
-
-del ds_list
+ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in var_dict.keys()]
+ds_whole = xr.merge(ds, compat = 'override')
 
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
-
-del ds_whole
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -113,7 +96,7 @@ class DataGenerator(keras.utils.Sequence):
         self.on_epoch_end()
 
         # For some weird reason calling .load() earlier messes up the mean and std computations
-        if load: print('Loading data into RAM'); self.data.load()
+        # if load: print('Loading data into RAM'); self.data.load()
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -136,6 +119,8 @@ bs=32
 lead_time=72
 output_vars = ['z_500', 't_850']
 
+print('data loaded')
+
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
@@ -145,6 +130,8 @@ dg_valid = DataGenerator(
 # Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
                          shuffle=False, output_vars=output_vars)
+
+print('data generator')
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -222,40 +209,31 @@ def build_cnn(filters, kernels, input_shape, dr=0):
     for f, k in zip(filters[:-1], kernels[:-1]):
         x = PeriodicConv2D(f, k)(x)
         x = LeakyReLU()(x)
-        # x = BatchNormalization()(x)
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
     return keras.models.Model(input, output)
-    
-for i in range(4):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10))
 
-    cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
+cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10))
 
-    print(cnn.summary())
+cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+print(cnn.summary())
+
+checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=True,
+    monitor='val_loss',
+    mode='min',
+    save_best_only=True)
+
+cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
                         patience=2,
                         verbose=1, 
                         mode='auto'
-                    )]
+                    ), model_checkpoint_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_mm_more_data_' + str(i)
-    cnn.save_weights(filename + '.h5')    
-
-    number_of_forecasts = 1
-
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
-
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_mm_more_data_' + str(i)
-        np.save(filename_2 + '.npy', pred_ensemble)
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_mm_more_data_no_load_' + str(i)
+cnn.save_weights(filename + '.h5')

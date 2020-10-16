@@ -17,8 +17,8 @@ DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 # For the data generator all variables have to be merged into a single dataset.
 var_dict = {
-    'geopotential_500': ('z', None),
-    'temperature_850': ('t', None),
+    'geopotential': ('z', [500]),
+    'temperature': ('t', [850]),
     #'specific_humidity': ('q', [850]),
     '2m_temperature': ('t2m', None),
     #'potential_vorticity': ('pv', [50, 100]),
@@ -31,6 +31,8 @@ ds_whole = xr.merge(ds, compat = 'override')
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
+
+print('got here')
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -129,6 +131,8 @@ dg_valid = DataGenerator(
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
                          shuffle=False, output_vars=output_vars)
 
+print('data generator')
+
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
         super().__init__(**kwargs)
@@ -203,18 +207,14 @@ def build_cnn(filters, kernels, input_shape, dr=0):
     """Fully convolutional network"""
     x = input = Input(shape=input_shape)
     for f, k in zip(filters[:-1], kernels[:-1]):
-        if k == 5:
-            x = PeriodicConv2D(f, k)(x)
-        else:
-            x = PeriodicConv2D(f, k)(x)
-            x = PeriodicConv2D(f, k)(x)
+        x = PeriodicConv2D(f, k)(x)
         x = LeakyReLU()(x)
-        # x = BatchNormalization()(x)
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
     return keras.models.Model(input, output)
     
 for i in range(4):
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 3, 3, 3, 3], (32, 64, 4))
+    print(i)
+    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 4))
 
     cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
