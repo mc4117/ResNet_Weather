@@ -1,4 +1,4 @@
-#PBS -lwalltime=02:00:00
+#PBS -lwalltime=24:00:00
 #PBS -lselect=1:ncpus=4:mem=24gb:ngpus=1:gpu_type=P100
 
 module load anaconda3/personal
@@ -7,4 +7,4 @@ source activate testgpu
 
 cd $PBS_O_WORKDIR/neural_notebooks/python_files/
 
-python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/python_files/multivariable/annual_nn_72_res.py "orig"
+python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/python_files/resnet/whole_orig_nn_do.py 15
