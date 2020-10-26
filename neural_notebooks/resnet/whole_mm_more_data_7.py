@@ -267,7 +267,7 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 
-for i in range(4):
+for i in range(1, 4):
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
