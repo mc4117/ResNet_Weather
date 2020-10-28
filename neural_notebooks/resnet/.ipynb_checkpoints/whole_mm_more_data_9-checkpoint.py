@@ -1,8 +1,3 @@
-import argparse
-# defined command line options
-
-CLI=argparse.ArgumentParser()
-
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -13,28 +8,6 @@ from src.score import *
 import re
 from collections import OrderedDict
 
-CLI.add_argument(
-  "--level_list",
-  nargs="*",
-  type=int,  # any type/callable can be used here
-  default=None,
-)
-
-CLI.add_argument(
-  "--block_no",
-  type = int,
-  default = 2,
-)
-
-CLI.add_argument(
-  "--var_name",
-  type = str,
-  default = None,
-)
-
-var_name = args.var_name
-print(args.var_name)
-
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
@@ -42,51 +15,15 @@ print('Found GPU at: {}'.format(device_name))
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
-if args.level_list is not None:
-    unique_list = sorted(list(dict.fromkeys(args.level_list)))
-
 # For the data generator all variables have to be merged into a single dataset.
-if var_name == 'specific_humidity':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'specific_humidity': ('q', unique_list)}
-elif var_name == '2m temp':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        '2m_temperature': ('t2m', None)}
-elif var_name == 'solar rad':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'toa_incident_solar_radiation': ('tisr', None)}
-elif var_name == 'pot_vort':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', unique_list)}
-elif var_name == 'const':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'orig':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850])} 
-elif var_name == 'temp':
-    unique_list.append(850)
-    unique_list = sorted(list(dict.fromkeys(unique_list)))
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', unique_list)}
-elif var_name == 'geo':
-    unique_list.append(500)
-    unique_list = sorted(list(dict.fromkeys(unique_list)))
-    var_dict = {
-        'geopotential': ('z', unique_list),
-        'temperature': ('t', [850])}    
+var_dict = {
+    'geopotential': ('z', [500, 850]),
+    'temperature': ('t', [500, 850]),
+    'specific_humidity': ('q', [850]),
+    '2m_temperature': ('t2m', None),
+    'potential_vorticity': ('pv', [50, 100]),
+    'constants': ['lsm', 'orography']
+}
 
 ds_list = []
 
@@ -307,13 +244,13 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
-checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
-model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    filepath=checkpoint_filepath,
-    save_weights_only=True,
-    monitor='val_loss',
-    mode='min',
-    save_best_only=True)
+#checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
+#model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+#    filepath=checkpoint_filepath,
+#    save_weights_only=True,
+#    monitor='val_loss',
+#    mode='min',
+#    save_best_only=True)
 
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
@@ -329,50 +266,31 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
-filt = [64]
-kern = [5]
 
-for i in range(int(args.block_no)):
-    filt.append(64)
-    kern.append(5)
+for i in range(4):
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
-filt.append(2)
-kern.append(5)
+    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
-if args.level_list is not None:
-    if var_name == "temp":
-        tot_var = 1 + len(unique_list)
-    elif var_name == "geo":
-        tot_var = 1 + len(unique_list)
-    else:
-        tot_var = 2 + len(unique_list)
-else:
-    tot_var = len(var_dict)
+    print(cnn.summary())
 
-cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
-    
-
-cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
-
-print(cnn.summary())
-
-cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
+    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+          callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
-cnn.save_weights(filename + '.h5')    
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_9_' + str(i)
+    cnn.save_weights(filename + '.h5')    
 
-number_of_forecasts = 12
+    number_of_forecasts = 12
 
-pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-print(pred_ensemble.shape)
-forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+    print(pred_ensemble.shape)
+    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
-for j in range(number_of_forecasts):
-    print(j)
-    output = create_predictions(cnn, dg_test)
-    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-    pred_ensemble[:,:,:,:,j]=pred2
-    forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
-np.save(filename_2 + '.npy', pred_ensemble)
+    for j in range(number_of_forecasts):
+        print(j)
+        output = create_predictions(cnn, dg_test)
+        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+        pred_ensemble[:,:,:,:,j]=pred2
+        forecast_counter[j]=j+1
+        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_9_' + str(i)
+        np.save(filename_2 + '.npy', pred_ensemble)

@@ -1,3 +1,8 @@
+import argparse
+# defined command line options
+
+CLI=argparse.ArgumentParser()
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -8,12 +13,30 @@ from src.score import *
 import re
 from collections import OrderedDict
 
-import sys
-print("Script name ", sys.argv[0])
+CLI.add_argument(
+  "--level_list",
+  nargs="*",
+  type=int,  # any type/callable can be used here
+  default=None,
+)
 
-var_name = sys.argv[1]
+CLI.add_argument(
+  "--block_no",
+  type = int,
+  default = 2,
+)
 
-print(var_name)
+CLI.add_argument(
+  "--var_name",
+  type = str,
+  default = None,
+)
+
+args = CLI.parse_args()
+
+var_name = args.var_name
+print(args.var_name)
+print(args.block_no)
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -22,12 +45,15 @@ print('Found GPU at: {}'.format(device_name))
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
+if args.level_list is not None:
+    unique_list = sorted(list(dict.fromkeys(args.level_list)))
+
 # For the data generator all variables have to be merged into a single dataset.
 if var_name == 'specific_humidity':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'specific_humidity': ('q', [500, 850])}
+        'specific_humidity': ('q', unique_list)}
 elif var_name == '2m temp':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -42,7 +68,7 @@ elif var_name == 'pot_vort':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [50, 100])} #850])}
+        'potential_vorticity': ('pv', unique_list)}
 elif var_name == 'const':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -52,6 +78,19 @@ elif var_name == 'orig':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850])} 
+elif var_name == 'temp':
+    unique_list.append(850)
+    unique_list = sorted(list(dict.fromkeys(unique_list)))
+    print(unique_list)
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', unique_list)}
+elif var_name == 'geo':
+    unique_list.append(500)
+    unique_list = sorted(list(dict.fromkeys(unique_list)))
+    var_dict = {
+        'geopotential': ('z', unique_list),
+        'temperature': ('t', [850])}    
 
 ds_list = []
 
@@ -65,7 +104,8 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-# have to remove first 7 data points
+print('got here')
+
 ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
 # In this notebook let's only load a subset of the training data
@@ -219,7 +259,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict(dg),
+        model.predict_generator(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -271,6 +311,14 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
+checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=True,
+    monitor='val_loss',
+    mode='min',
+    save_best_only=True)
+
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -285,17 +333,27 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+filt = [64]
+kern = [5]
 
-if var_name == 'specific_humidity':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'pot_vort':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'const':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
-elif var_name == 'orig':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 2), l2 = 1e-5, dr = 0.1)
+for i in range(int(args.block_no)):
+    filt.append(64)
+    kern.append(5)
+
+filt.append(2)
+kern.append(5)
+
+if args.level_list is not None:
+    if var_name == "temp":
+        tot_var = 1 + len(unique_list)
+    elif var_name == "geo":
+        tot_var = 1 + len(unique_list)
+    else:
+        tot_var = 2 + len(unique_list)
 else:
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 3), l2 = 1e-5, dr = 0.1)
+    tot_var = len(var_dict)
+
+cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
     
 
 cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
@@ -303,11 +361,10 @@ cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 print(cnn.summary())
 
 cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback]
+          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
          )
-
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
-cnn.load_weights(filename + '.h5')    
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
+cnn.save_weights(filename + '.h5')    
 
 number_of_forecasts = 20
 
@@ -321,5 +378,5 @@ for j in range(number_of_forecasts):
     pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
     pred_ensemble[:,:,:,:,j]=pred2
     forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
 np.save(filename_2 + '.npy', pred_ensemble)

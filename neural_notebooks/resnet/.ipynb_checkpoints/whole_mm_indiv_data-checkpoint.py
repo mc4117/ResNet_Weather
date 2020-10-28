@@ -42,7 +42,7 @@ elif var_name == 'pot_vort':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [50, 100])} #850])}
+        'potential_vorticity': ('pv', [500, 850])}
 elif var_name == 'const':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -219,7 +219,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict(dg),
+        model.predict_generator(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -271,6 +271,14 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
+checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
+model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_filepath,
+    save_weights_only=True,
+    monitor='val_loss',
+    mode='min',
+    save_best_only=True)
+
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -303,11 +311,10 @@ cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 print(cnn.summary())
 
 cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback]
+          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
          )
-
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
-cnn.load_weights(filename + '.h5')    
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data_do_5_' + str(var_name)
+cnn.save_weights(filename + '.h5')    
 
 number_of_forecasts = 20
 
@@ -321,5 +328,5 @@ for j in range(number_of_forecasts):
     pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
     pred_ensemble[:,:,:,:,j]=pred2
     forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_' + str(var_name)
 np.save(filename_2 + '.npy', pred_ensemble)

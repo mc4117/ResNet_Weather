@@ -42,7 +42,7 @@ elif var_name == 'pot_vort':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [50, 100])} #850])}
+        'potential_vorticity': ('pv', [500, 850])}
 elif var_name == 'const':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -298,6 +298,22 @@ else:
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 3), l2 = 1e-5, dr = 0.1)
     
 
+if var_name != 'orig':
+    cnn_orig = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 2), l2 = 1e-5, dr = 0.1)
+    cnn_orig.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_train_res_do_5.h5')
+    j = 2
+    i = 2
+    for k in range(2, len(cnn.layers)):
+        if type(cnn.layers[j]) == type(cnn_orig.layers[i]):
+            cnn.layers[j].set_weights(cnn_orig.layers[i].get_weights())
+            j += 1
+            i += 1
+        elif type(cnn.layers[j]) == tf.keras.layers.Dropout:
+            j += 1
+        else:
+            print("error")
+
+    
 cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
 print(cnn.summary())
@@ -306,7 +322,7 @@ cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_finetune_do_5_' + str(var_name)
 cnn.load_weights(filename + '.h5')    
 
 number_of_forecasts = 20
@@ -321,5 +337,5 @@ for j in range(number_of_forecasts):
     pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
     pred_ensemble[:,:,:,:,j]=pred2
     forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_finetune_do_5_' + str(var_name)
 np.save(filename_2 + '.npy', pred_ensemble)
