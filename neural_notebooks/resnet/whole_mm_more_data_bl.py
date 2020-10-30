@@ -1,3 +1,8 @@
+import argparse
+# defined command line options
+
+CLI=argparse.ArgumentParser()
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -7,6 +12,16 @@ import tensorflow.keras.backend as K
 from src.score import *
 import re
 from collections import OrderedDict
+
+CLI.add_argument(
+  "--block_no",
+  type = int,
+  default = 2,
+)
+
+args = CLI.parse_args()
+
+print(args.block_no)
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -244,14 +259,6 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
-#checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
-#model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-#    filepath=checkpoint_filepath,
-#    save_weights_only=True,
-#    monitor='val_loss',
-#    mode='min',
-#    save_best_only=True)
-
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -266,9 +273,18 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+filt = [64]
+kern = [5]
+
+for i in range(int(args.block_no)):
+    filt.append(64)
+    kern.append(5)
+
+filt.append(2)
+kern.append(5)
 
 for i in range(4):
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
+    cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
@@ -277,7 +293,7 @@ for i in range(4):
     cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_11_' + str(i)
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
     cnn.save_weights(filename + '.h5')    
 
     number_of_forecasts = 12
@@ -292,5 +308,5 @@ for i in range(4):
         pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
         pred_ensemble[:,:,:,:,j]=pred2
         forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_11_' + str(i)
+        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
         np.save(filename_2 + '.npy', pred_ensemble)

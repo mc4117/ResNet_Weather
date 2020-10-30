@@ -323,7 +323,7 @@ cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid,
          )
 
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_finetune_do_5_' + str(var_name)
-cnn.load_weights(filename + '.h5')    
+cnn.save_weights(filename + '.h5')    
 
 number_of_forecasts = 20
 

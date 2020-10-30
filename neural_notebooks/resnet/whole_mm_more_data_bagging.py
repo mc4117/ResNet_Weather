@@ -8,13 +8,6 @@ from src.score import *
 import re
 from collections import OrderedDict
 
-import sys
-print("Script name ", sys.argv[0])
-
-var_name = sys.argv[1]
-
-print(var_name)
-
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
@@ -23,35 +16,14 @@ print('Found GPU at: {}'.format(device_name))
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 # For the data generator all variables have to be merged into a single dataset.
-if var_name == 'specific_humidity':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'specific_humidity': ('q', [500, 850])}
-elif var_name == '2m temp':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        '2m_temperature': ('t2m', None)}
-elif var_name == 'solar rad':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'toa_incident_solar_radiation': ('tisr', None)}
-elif var_name == 'pot_vort':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [500, 850])}
-elif var_name == 'const':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'orig':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850])} 
+var_dict = {
+    'geopotential': ('z', [500, 850]),
+    'temperature': ('t', [500, 850]),
+    'specific_humidity': ('q', [850]),
+    '2m_temperature': ('t2m', None),
+    'potential_vorticity': ('pv', [50, 100]),
+    'constants': ['lsm', 'orography']
+}
 
 ds_list = []
 
@@ -65,8 +37,9 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-# have to remove first 7 data points
-ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
+print('got here')
+
+ds_whole = xr.merge(ds_list)
 
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
@@ -219,7 +192,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict(dg),
+        model.predict_generator(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -285,41 +258,59 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+# total number of points in train - 38*365*24 + 10*24 (from leap years)
 
-if var_name == 'specific_humidity':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'pot_vort':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'const':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
-elif var_name == 'orig':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 2), l2 = 1e-5, dr = 0.1)
-else:
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 3), l2 = 1e-5, dr = 0.1)
-    
+import random
 
-cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+X1, y1 = dg_train[0]
 
-print(cnn.summary())
+for i in range(1, len(dg_train)):
+    X2, y2 = dg_train[i]
+    X1 = np.concatenate((X1, X2))
+    y1 = np.concatenate((y1, y2))   
 
-cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback]
+sample_list = [i for i in range(len(X1))]
+
+pred_ensemble = np.ndarray(shape=(2, 8328, 32, 64, 40),dtype=np.float32)
+
+for mc in range(40):
+
+    random_list = random.sample(sample_list, 8328)
+
+    X_train =np.ndarray(shape=(8328, 32, 64, 2),dtype=np.float32)
+    y_train =np.ndarray(shape=(8328, 32, 64, 2),dtype=np.float32)
+
+    for i in range(len(random_list)):
+        idx = random_list[i]
+        X_train[i, ...] = X1[idx]
+        y_train[i, ...] = y1[idx]
+
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
+
+    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+
+    print(cnn.summary())
+
+    cnn.fit(x = X_train, y = y_train, epochs=100, validation_split=0.2, shuffle = True,
+          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
          )
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_bagging_more_data_do_5_' + str(mc)
+    cnn.save_weights(filename + '.h5')    
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
-cnn.save_weights(filename + '.h5')    
+    number_of_forecasts = 12
 
-number_of_forecasts = 20
+    output_total = 0
+    counter = 0
 
-pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-print(pred_ensemble.shape)
-forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+    for j in range(number_of_forecasts):
+        print(j)
+        output = create_predictions(cnn, dg_test)
+        output_total += output
+        counter +=1
 
-for j in range(number_of_forecasts):
-    print(j)
-    output = create_predictions(cnn, dg_test)
-    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-    pred_ensemble[:,:,:,:,j]=pred2
-    forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
+    output_total_avg = np.asarray((output_total/counter).to_array(), dtype = np.float32).squeeze()
+    pred_ensemble[:,:,:,:,mc] = output_total_avg
+    
+    
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/bagging_do_5_ensemble'
 np.save(filename_2 + '.npy', pred_ensemble)

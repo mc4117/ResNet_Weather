@@ -28,16 +28,6 @@ if var_name == 'specific_humidity':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'specific_humidity': ('q', [500, 850])}
-elif var_name == '2m temp':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        '2m_temperature': ('t2m', None)}
-elif var_name == 'solar rad':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'toa_incident_solar_radiation': ('tisr', None)}
 elif var_name == 'pot_vort':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -48,10 +38,15 @@ elif var_name == 'const':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'orig':
+elif var_name == 'geo':
+    var_dict = {
+        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
+        'temperature': ('t', [850])} 
+elif var_name == 'temp':
     var_dict = {
         'geopotential': ('z', [500]),
-        'temperature': ('t', [850])} 
+        'temperature': ('t', [300, 400, 500, 600, 700, 850])}
+
 
 ds_list = []
 
@@ -162,13 +157,17 @@ output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2013')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+
+dg_valid2 = DataGenerator(
+    ds_train.sel(time=slice('2014', '2014')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
-dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
-                         shuffle=False, output_vars=output_vars)
+#dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
+#                         shuffle=False, output_vars=output_vars)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -292,34 +291,35 @@ elif var_name == 'pot_vort':
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
 elif var_name == 'const':
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
-elif var_name == 'orig':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 2), l2 = 1e-5, dr = 0.1)
-else:
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 3), l2 = 1e-5, dr = 0.1)
-    
+elif var_name == 'geo':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
+elif var_name == 'temp':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
 
 cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
 print(cnn.summary())
 
-cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+"""
+cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
+"""
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
-cnn.save_weights(filename + '.h5')    
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_valid_do_5_' + str(var_name)
+cnn.load_weights(filename + '.h5')    
 
 number_of_forecasts = 20
 
-pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+pred_ensemble=np.ndarray(shape=(2, 17472, 32, 64, number_of_forecasts),dtype=np.float32)
 print(pred_ensemble.shape)
 forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
 for j in range(number_of_forecasts):
     print(j)
-    output = create_predictions(cnn, dg_test)
+    output = create_predictions(cnn, dg_valid)
     pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
     pred_ensemble[:,:,:,:,j]=pred2
     forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_5_' + str(var_name)
 np.save(filename_2 + '.npy', pred_ensemble)

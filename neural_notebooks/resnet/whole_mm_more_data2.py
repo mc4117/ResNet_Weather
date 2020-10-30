@@ -20,7 +20,6 @@ var_dict = {
     'geopotential': ('z', [500, 850]),
     'temperature': ('t', [500, 850]),
     'specific_humidity': ('q', [850]),
-    #'2m_temperature': ('t2m', None),
     'potential_vorticity': ('pv', [500, 850]),
     'constants': ['lsm', 'lat2d', 'orography']
 }

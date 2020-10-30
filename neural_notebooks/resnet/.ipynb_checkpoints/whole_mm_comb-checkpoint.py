@@ -1,3 +1,8 @@
+import argparse
+# defined command line options
+
+CLI=argparse.ArgumentParser()
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -8,12 +13,15 @@ from src.score import *
 import re
 from collections import OrderedDict
 
-import sys
-print("Script name ", sys.argv[0])
+CLI.add_argument(
+  "--block_no",
+  type = int,
+  default = 2,
+)
 
-var_name = sys.argv[1]
+args = CLI.parse_args()
 
-print(var_name)
+print(args.block_no)
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -23,35 +31,9 @@ print('Found GPU at: {}'.format(device_name))
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 # For the data generator all variables have to be merged into a single dataset.
-if var_name == 'specific_humidity':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'specific_humidity': ('q', [500, 850])}
-elif var_name == '2m temp':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        '2m_temperature': ('t2m', None)}
-elif var_name == 'solar rad':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'toa_incident_solar_radiation': ('tisr', None)}
-elif var_name == 'pot_vort':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [500, 850])}
-elif var_name == 'const':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'orig':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850])} 
+var_dict = {
+        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
+        'temperature': ('t', [300, 400, 500, 600, 700, 850])} 
 
 ds_list = []
 
@@ -65,7 +47,8 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-# have to remove first 7 data points
+print('got here')
+
 ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
 # In this notebook let's only load a subset of the training data
@@ -219,7 +202,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict(dg),
+        model.predict_generator(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -285,41 +268,37 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+filt = [64]
+kern = [5]
 
-if var_name == 'specific_humidity':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'pot_vort':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'const':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
-elif var_name == 'orig':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 2), l2 = 1e-5, dr = 0.1)
-else:
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 3), l2 = 1e-5, dr = 0.1)
+for i in range(int(args.block_no)):
+    filt.append(64)
+    kern.append(5)
+
+filt.append(2)
+kern.append(5)
+
+for i in range(4):
+    cnn = build_resnet_cnn(filt, kern, (32, 64, 12), l2 = 1e-5, dr = 0.1)
     
-
-cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
-
-print(cnn.summary())
-
-cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_' + str(args.block_no) + '_comb_' + str(i)
+    cnn.save_weights(filename + '.h5')    
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
-cnn.save_weights(filename + '.h5')    
+    number_of_forecasts = 20
 
-number_of_forecasts = 20
+    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+    print(pred_ensemble.shape)
+    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
-pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-print(pred_ensemble.shape)
-forecast_counter=np.zeros(number_of_forecasts,dtype=int)
-
-for j in range(number_of_forecasts):
-    print(j)
-    output = create_predictions(cnn, dg_test)
-    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-    pred_ensemble[:,:,:,:,j]=pred2
-    forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data2_do_5_' + str(var_name)
-np.save(filename_2 + '.npy', pred_ensemble)
+    for j in range(number_of_forecasts):
+        print(j)
+        output = create_predictions(cnn, dg_test)
+        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+        pred_ensemble[:,:,:,:,j]=pred2
+        forecast_counter[j]=j+1
+    filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_do_' + str(args.block_no) + '_comb_' + str(i)
+    np.save(filename_2 + '.npy', pred_ensemble)

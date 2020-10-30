@@ -267,22 +267,24 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 
-for i in range(4):
+for i in range(1):
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
     print(cnn.summary())
-
+    """
     cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
+    """
+
     filename = '/rds/general/user/mc4117/ephemeral/saved_models_120/whole_res_more_data_120_do_7_' + str(i)
-    cnn.save_weights(filename + '.h5')    
+    cnn.load_weights(filename + '.h5')    
 
     number_of_forecasts = 12
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+    pred_ensemble=np.ndarray(shape=(2, 17400, 32, 64, number_of_forecasts),dtype=np.float32)
     print(pred_ensemble.shape)
     forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
