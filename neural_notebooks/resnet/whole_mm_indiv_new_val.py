@@ -1,3 +1,8 @@
+import argparse
+# defined command line options
+
+CLI=argparse.ArgumentParser()
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -8,12 +13,30 @@ from src.score import *
 import re
 from collections import OrderedDict
 
-import sys
-print("Script name ", sys.argv[0])
+CLI.add_argument(
+  "--level_list",
+  nargs="*",
+  type=int,  # any type/callable can be used here
+  default=None,
+)
 
-var_name = sys.argv[1]
+CLI.add_argument(
+  "--block_no",
+  type = int,
+  default = 2,
+)
 
-print(var_name)
+CLI.add_argument(
+  "--var_name",
+  type = str,
+  default = None,
+)
+
+args = CLI.parse_args()
+
+var_name = args.var_name
+print(args.var_name)
+print(args.block_no)
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
@@ -22,31 +45,60 @@ print('Found GPU at: {}'.format(device_name))
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
+if args.level_list is not None:
+    unique_list = sorted(list(dict.fromkeys(args.level_list)))
+
 # For the data generator all variables have to be merged into a single dataset.
 if var_name == 'specific_humidity':
+    if args.level_list is None:
+        unique_list = [300, 500, 600, 700, 850, 925, 1000]
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'specific_humidity': ('q', [500, 850])}
+        'specific_humidity': ('q', unique_list)}
+elif var_name == '2m_temp':
+    unique_list = None
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        '2m_temperature': ('t2m', None)}
 elif var_name == 'pot_vort':
+    if args.level_list is None:
+        unique_list = [150, 250, 300, 700, 850]  
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', [500, 850])}
+        'potential_vorticity': ('pv', unique_list)}
 elif var_name == 'const':
+    unique_list	= None
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'geo':
-    var_dict = {
-        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
-        'temperature': ('t', [850])} 
-elif var_name == 'temp':
+elif var_name == 'orig':
+    unique_list	= None
     var_dict = {
         'geopotential': ('z', [500]),
-        'temperature': ('t', [300, 400, 500, 600, 700, 850])}
-
+        'temperature': ('t', [850])} 
+elif var_name == 'temp':
+    if args.level_list is None:
+        unique_list = [300, 400, 500, 600, 700, 850]
+    else:
+        unique_list.append(850)
+        unique_list = sorted(list(dict.fromkeys(unique_list)))
+    print(unique_list)
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', unique_list)}
+elif var_name == 'geo':
+    if args.level_list is None:
+        unique_list = [300, 400, 500, 600, 700, 850]
+    else:
+        unique_list.append(500)
+        unique_list = sorted(list(dict.fromkeys(unique_list)))
+    var_dict = {
+        'geopotential': ('z', unique_list),
+        'temperature': ('t', [850])}
 
 ds_list = []
 
@@ -166,8 +218,8 @@ dg_valid2 = DataGenerator(
     ds_train.sel(time=slice('2014', '2014')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
-#dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
-#                         shuffle=False, output_vars=output_vars)
+dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
+                         shuffle=False, output_vars=output_vars)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -285,16 +337,30 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 
-if var_name == 'specific_humidity':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'pot_vort':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
-elif var_name == 'const':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
-elif var_name == 'geo':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
-elif var_name == 'temp':
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
+filt = [64]
+kern = [5]
+
+for i in range(int(args.block_no)):
+    filt.append(64)
+    kern.append(5)
+
+filt.append(2)
+kern.append(5)
+
+if unique_list is not None:
+    if var_name == "temp":
+        tot_var = 1 + len(unique_list)
+    elif var_name == "geo":
+        tot_var = 1 + len(unique_list)
+    else:
+        tot_var = 2 + len(unique_list)
+else:
+    if var_name == 'const':
+        tot_var = len(var_dict) + 2
+    else:
+        tot_var = len(var_dict)
+
+cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
 
 cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
@@ -304,20 +370,50 @@ cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_valid_do_5_' + str(var_name)
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_val_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
 cnn.save_weights(filename + '.h5')    
 
-number_of_forecasts = 20
+
+number_of_forecasts = 30
 
 pred_ensemble=np.ndarray(shape=(2, 17472, 32, 64, number_of_forecasts),dtype=np.float32)
 print(pred_ensemble.shape)
 forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
+output_total = 0
+
 for j in range(number_of_forecasts):
     print(j)
     output = create_predictions(cnn, dg_valid)
+    output_total += output.copy()
     pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
     pred_ensemble[:,:,:,:,j]=pred2
     forecast_counter[j]=j+1
-filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_5_' + str(var_name)
+
+output_avg = output_total/number_of_forecasts
+output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newval.nc')
+    
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
+np.save(filename_2 + '.npy', pred_ensemble)
+
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+output_total2 = 0
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_test)
+    output_total2 += output.copy()
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+
+output_avg2 = output_total2/number_of_forecasts
+output_avg2.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newtest.nc')
+
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_test_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
 np.save(filename_2 + '.npy', pred_ensemble)

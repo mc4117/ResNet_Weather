@@ -269,6 +269,33 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     
     return keras.models.Model(input, output)
 
+def create_predictions(model, dg):
+    """Create predictions for non-iterative model"""
+    preds = model.predict_generator(dg)
+    # Unnormalize
+    preds = preds * dg.std.values + dg.mean.values
+    fcs = []
+    lev_idx = 0
+    for var, levels in OrderedDict({'z': None, 't': None}).items():
+        if levels is None:
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx],
+                dims=['time', 'lat', 'lon'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon},
+                name=var
+            ))
+            lev_idx += 1
+        else:
+            nlevs = len(levels)
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx:lev_idx+nlevs],
+                dims=['time', 'lat', 'lon', 'level'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon, 'level': levels},
+                name=var
+            ))
+            lev_idx += nlevs
+    return xr.merge(fcs)
+
 filt = [64]
 kern = [5]
 
@@ -299,9 +326,24 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
-
+"""
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
+"""
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_train_res_do_' + str(block_no) + '.h5')
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_train_res_do_' + str(block_no) + '.h5')
+
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+for j in range(number_of_forecasts):
+    output = create_predictions(cnn, dg_test)
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_train_res_do_' + str(block_no)
+np.save(filename_2 + '.npy', pred_ensemble)

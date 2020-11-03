@@ -145,7 +145,7 @@ class DataGenerator(keras.utils.Sequence):
             np.random.shuffle(self.idxs)
 
 bs=32
-lead_time=72
+lead_time=120
 output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
@@ -293,12 +293,12 @@ for i in range(2, 4):
     cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models_120/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
     cnn.save_weights(filename + '.h5')    
 
     number_of_forecasts = 12
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+    pred_ensemble=np.ndarray(shape=(2, 17400, 32, 64, number_of_forecasts),dtype=np.float32)
     print(pred_ensemble.shape)
     forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
@@ -308,5 +308,5 @@ for i in range(2, 4):
         pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
         pred_ensemble[:,:,:,:,j]=pred2
         forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
+        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred_120/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
         np.save(filename_2 + '.npy', pred_ensemble)

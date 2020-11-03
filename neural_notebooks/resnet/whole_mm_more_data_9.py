@@ -21,7 +21,7 @@ var_dict = {
     'temperature': ('t', [500, 850]),
     'specific_humidity': ('q', [850]),
     '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [500, 850]),
+    'potential_vorticity': ('pv', [50, 100]),
     'constants': ['lsm', 'orography']
 }
 
@@ -267,7 +267,7 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 
-for i in range(4):
+for i in range(2, 4):
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
@@ -277,7 +277,7 @@ for i in range(4):
     cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_new_pv_do_9_' + str(i)
+    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_9_' + str(i)
     cnn.save_weights(filename + '.h5')    
 
     number_of_forecasts = 12
@@ -292,5 +292,5 @@ for i in range(4):
         pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
         pred_ensemble[:,:,:,:,j]=pred2
         forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_new_pv_do_9_' + str(i)
+        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_9_' + str(i)
         np.save(filename_2 + '.npy', pred_ensemble)
