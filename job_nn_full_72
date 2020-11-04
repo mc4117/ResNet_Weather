@@ -7,4 +7,4 @@ source activate testgpu
 
 cd $PBS_O_WORKDIR/neural_notebooks/resnet/
 
-python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/resnet/whole_orig_nn_do.py 9
+python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/categorical/whole_orig_nn_72.py 5
