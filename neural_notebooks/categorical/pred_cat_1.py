@@ -14,11 +14,13 @@ print("Script name ", sys.argv[0])
 
 block_no = sys.argv[1]
 
+"""
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
-    
+"""
+
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
@@ -75,40 +77,11 @@ class DataGenerator(keras.utils.Sequence):
         self.valid_time = self.data.isel(time=slice(lead_time, None)).time
         
         
-        bins_z = np.linspace(ds.z.min(), ds.z.max(), 100)
-        digitized_z = np.digitize(ds.z, bins_z)-1
+        self.bins_z = np.linspace(ds.z.min(), ds.z.max(), 100)
+        digitized_z = np.digitize(ds.z, self.bins_z)-1
         del ds
 
-        #binned_data_z = np.zeros(digitized_z.shape)
-        #nx, ny, nz = digitized_z.shape
-
-        #for i in range(nx):
-        #    for j in range(ny):
-        #        for k in range(nz):
-        #            binned_data_z[i, j, k] = bins_z[digitized_z[i, j, k]]
-
         binned_data = to_categorical(digitized_z, num_classes = 100, dtype = 'int8')
-        #bins_t = np.linspace(ds.t.min(), ds.t.max(), 200)
-        #digitized_t = np.digitize(ds.t, bins_t)-1
-
-        #binned_data_t = np.zeros(digitized_t.shape)
-        #nx, ny, nz = digitized_t.shape
-
-        #for i in range(nx):
-        #    for j in range(ny):
-        #        for k in range(nz):
-        #            binned_data_t[i, j, k] = bins_t[digitized_t[i, j, k]]
-        #ds_binned = ds.copy()
-        #ds_binned.z.values = binned_data_z
-        #ds_binned.t.values = binned_data_t
-        
-        #binned_data = []
-        #generic_level = xr.DataArray([1], coords={'level': [1]}, dims=['level'])
-        #for var, levels in var_dict.items():
-        #    try:
-        #        binned_data.append(ds_binned[var].sel(level=levels))
-        #    except ValueError:
-        #        binned_data.append(ds_binned[var].expand_dims({'level': generic_level}, 1))
 
         self.binned_data = xr.Dataset({'z': xr.DataArray(
                binned_data,
@@ -150,12 +123,10 @@ lead_time=72
 dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
 
-dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
-
 dg_test = DataGenerator(
     ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
 
+"""
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
         super().__init__(**kwargs)
@@ -216,7 +187,7 @@ def convblock(inputs, f, k, l2, dr = 0):
     return x
 
 def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = True):
-    """Fully convolutional residual network"""
+    #Fully convolutional residual network
 
     x = input = Input(shape=input_shape)
     x = convblock(x, filters[0], kernels[0], dr)
@@ -248,26 +219,66 @@ cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5)
 
 cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
-print(cnn.summary())
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_res_' + str(block_no) + '.h5')
 
-early_stopping_callback = tf.keras.callbacks.EarlyStopping(
-                        monitor='val_loss',
-                        min_delta=0,
-                        patience=5,
-                        verbose=1, 
-                        mode='auto'
-                    )
+output = cnn.predict(dg_test)
+    
+preds_cat = xr.DataArray(output[:, :, :, :], dims=['time', 'lat', 'lon', 'cat'], coords={'time': dg_test.valid_time, 'lat': dg_test.ds.lat, 'lon': dg_test.ds.lon, 'cat': dg_test.bins_z}) 
 
-reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor = 'val_loss',
-            patience=2,
-            factor=0.2,
-            verbose=1)
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_cat_res_' + str(block_no)
+np.save(filename_2 + '.npy', preds_cat)
 
+del ds
+del ds_test
+del dg_train
+del ds_train
 
-cnn.fit(dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback]
-         )
+nx, ny, nz, catnz = preds_cat.shape
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_res_' + str(block_no) + '.h5')
+full_out = np.zeros((nx, ny, nz))
 
+for i in range(nx):
+    for j in range(ny):
+        for k in range(nz):
+            full_out[i][j][k] = dg_test.bins_z[preds_cat[i][j][k].argmax()]
+
+del preds_cat
+"""
+filename_3 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_cat_res_nonbin' + str(block_no)
+full_out = np.load(filename_3 + '.npy')
+
+#print(compute_weighted_rmse(full_out, z500_valid))            
+
+X1, y1 = dg_test[0]
+
+for i in range(1, len(dg_test)):
+    X2, y2 = dg_test[i]
+    y1 = np.concatenate((y1, y2))
+
+nx_y, ny_y, nz_y, catnz_y = y1.shape
+
+y1_full = np.zeros((nx_y, ny_y, nz_y))
+
+for i in range(nx_y):
+    for j in range(ny_y):
+        for k in range(nz_y):
+            y1_full[i][j][k] = dg_test.bins_z[y1[i][j][k].argmax()]
+
+real_ds = xr.Dataset({
+    'z': xr.DataArray(
+        y1_full[..., 0],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                }
+})
+
+full_out_ds = xr.Dataset({
+    'z': xr.DataArray(
+        full_out[..., 0],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                } 
+})
+
+    
+print(compute_weighted_rmse(full_out, real_ds))

@@ -21,21 +21,18 @@ args = CLI.parse_args()
 
 print(args.block_no)
 
-"""
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
-"""
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 var_dict = {
         'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
         'temperature': ('t', [300, 400, 500, 600, 700, 850]),
-        'specific_humidity': ('q', [300, 500, 600, 700, 850, 925, 1000]),
+        'specific_humidity': ('q', [500, 850]),
         'potential_vorticity': ('pv', [150, 250, 300, 700, 850]),
-        '2m_temperature': ('t2m', None),
         'constants': ['lat2d', 'orography', 'lsm']}
 
 print(var_dict)
@@ -166,9 +163,6 @@ print('test')
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
                          shuffle=False, output_vars=output_vars)
 
-stop
-
-
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
         super().__init__(**kwargs)
@@ -295,18 +289,7 @@ for i in range(int(args.block_no)):
 filt.append(2)
 kern.append(5)
 
-if unique_list is not None:
-    if var_name == "temp":
-        tot_var = 1 + len(unique_list)
-    elif var_name == "geo":
-        tot_var = 1 + len(unique_list)
-    else:
-        tot_var = 2 + len(unique_list)
-else:
-    if var_name == 'const':
-        tot_var = len(var_dict) + 2
-    else:
-        tot_var = len(var_dict)
+tot_var = 22
 
 cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
 

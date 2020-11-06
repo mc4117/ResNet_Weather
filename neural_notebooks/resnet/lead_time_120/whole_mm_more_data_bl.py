@@ -283,7 +283,7 @@ for i in range(int(args.block_no)):
 filt.append(2)
 kern.append(5)
 
-for i in range(2, 4):
+for i in range(2):
     cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')

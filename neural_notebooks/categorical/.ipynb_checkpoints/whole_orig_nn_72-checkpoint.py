@@ -4,6 +4,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import *
 import tensorflow.keras.backend as K
+from tensorflow.keras.utils import to_categorical
 from src.score import *
 import re
 from collections import OrderedDict
@@ -17,8 +18,6 @@ device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
-
-
     
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
@@ -76,18 +75,19 @@ class DataGenerator(keras.utils.Sequence):
         self.valid_time = self.data.isel(time=slice(lead_time, None)).time
         
         
-        bins_z = np.linspace(ds.z.min(), ds.z.max(), 200)
+        bins_z = np.linspace(ds.z.min(), ds.z.max(), 100)
         digitized_z = np.digitize(ds.z, bins_z)-1
+        del ds
 
-        binned_data_z = np.zeros(digitized_z.shape)
-        nx, ny, nz = digitized_z.shape
+        #binned_data_z = np.zeros(digitized_z.shape)
+        #nx, ny, nz = digitized_z.shape
 
         #for i in range(nx):
         #    for j in range(ny):
         #        for k in range(nz):
         #            binned_data_z[i, j, k] = bins_z[digitized_z[i, j, k]]
 
-        self.binned_data = to_categorical(digitized_z, num_classes = 200)
+        binned_data = to_categorical(digitized_z, num_classes = 100, dtype = 'int8')
         #bins_t = np.linspace(ds.t.min(), ds.t.max(), 200)
         #digitized_t = np.digitize(ds.t, bins_t)-1
 
@@ -110,15 +110,18 @@ class DataGenerator(keras.utils.Sequence):
         #    except ValueError:
         #        binned_data.append(ds_binned[var].expand_dims({'level': generic_level}, 1))
 
-        #self.binned_data = xr.concat(binned_data_z, 'level').transpose('time', 'lat', 'lon', 'level')
-        # Normalize
-        #self.binned_data = (self.binned_data - self.mean[0]) / self.std[0]     
+        self.binned_data = xr.Dataset({'z': xr.DataArray(
+               binned_data,
+               dims=['time', 'lat', 'lon', 'cat'],
+               coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values, 'cat': range(100)
+               },
+               )})
 
         self.on_epoch_end()
 
         # For some weird reason calling .load() earlier messes up the mean and std computations
         if load: print('Loading data into RAM'); self.data.load()
-        if load: print('Loading data into RAM'); self.binned_data.load()            
+        if load: print('Loading data into RAM'); self.binned_data.z.load()            
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -128,7 +131,7 @@ class DataGenerator(keras.utils.Sequence):
         'Generate one batch of data'
         idxs = self.idxs[i * self.batch_size:(i + 1) * self.batch_size]
         X = self.data.isel(time=idxs).values
-        y = self.binned_data.isel(time=idxs + self.lead_time).values
+        y = self.binned_data.z.isel(time=idxs + self.lead_time).values
         return X, y
 
     def on_epoch_end(self):
@@ -238,7 +241,7 @@ for i in range(int(block_no)):
     filt.append(64)
     kern.append(5)
 
-filt.append(200)
+filt.append(100)
 kern.append(5)
 
 cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5)
