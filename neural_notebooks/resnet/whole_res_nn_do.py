@@ -1,3 +1,5 @@
+# residual network with	number of blocks set in	the command line. Includes dropout and only use z500 and t850	as input variables.
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -6,10 +8,17 @@ from tensorflow.keras.layers import *
 import tensorflow.keras.backend as K
 from src.score import *
 import re
-import os
-import json
-
 from collections import OrderedDict
+
+import sys
+print("Script name ", sys.argv[0])
+
+block_no = sys.argv[1]
+
+device_name = tf.test.gpu_device_name()
+if device_name != '/device:GPU:0':
+    raise SystemError('GPU device not found')
+print('Found GPU at: {}'.format(device_name))
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -93,29 +102,7 @@ class DataGenerator(keras.utils.Sequence):
         self.idxs = np.arange(self.n_samples)
         if self.shuffle == True:
             np.random.shuffle(self.idxs)
-
     
-#os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-
-#os.environ.pop('TF_CONFIG', None)
-
-
-#tf_config = {
-#    'cluster': {
-#        'worker': ['localhost:12345', 'localhost:23456']
-#    },
-#    'task': {'type': 'worker', 'index': 0}
-#}
-
-
-
-#tf_config['task']['index'] = 1
-#os.environ['TF_CONFIG'] = json.dumps(tf_config)
-
-
-tf.config.threading.set_inter_op_parallelism_threads(8)
-tf.config.threading.set_intra_op_parallelism_threads(8)
-
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
@@ -130,7 +117,7 @@ datasets = [z, t]
 ds = xr.merge(datasets)
 
 # In this notebook let's only load a subset of the training data
-ds_train = ds.sel(time=slice('2015', '2016'))  
+ds_train = ds.sel(time=slice('1979', '2016'))  
 ds_test = ds.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
@@ -199,8 +186,6 @@ dic = OrderedDict({'z': None, 't': None})
 bs=32
 lead_time=72
 
-print('data loaded')
-
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
@@ -256,33 +241,111 @@ class PeriodicConv2D(tf.keras.layers.Layer):
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
     
-def build_cnn(filters, kernels, input_shape, dr=0):
-    """Fully convolutional network"""
-    x = input = Input(shape=input_shape)
-    for f, k in zip(filters[:-1], kernels[:-1]):
+def convblock(inputs, f, k, l2, dr = 0):
+    x = inputs
+    if l2 is not None:
+        x = PeriodicConv2D(f, k, conv_kwargs={
+            'kernel_regularizer': keras.regularizers.l2(l2)})(x) 
+    else:
         x = PeriodicConv2D(f, k)(x)
-        x = LeakyReLU()(x)
-        if dr > 0: x = Dropout(dr)(x)
+    x = LeakyReLU()(x)
+    x = BatchNormalization()(x)
+    if dr>0: x = Dropout(dr)(x, training = True)
+
+    return x
+
+def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = True):
+    """Fully convolutional residual network"""
+
+    x = input = Input(shape=input_shape)
+    x = convblock(x, filters[0], kernels[0], dr)
+
+    #Residual blocks
+    for f, k in zip(filters[1:-1], kernels[1:-1]):
+        y = x
+        for _ in range(2):
+            x = convblock(x, f, k, l2, dr)
+        if skip: x = Add()([y, x])
+
     output = PeriodicConv2D(filters[-1], kernels[-1])(x)
+    
     return keras.models.Model(input, output)
 
-strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+def create_predictions(model, dg):
+    """Create predictions for non-iterative model"""
+    preds = model.predict_generator(dg)
+    # Unnormalize
+    preds = preds * dg.std.values + dg.mean.values
+    fcs = []
+    lev_idx = 0
+    for var, levels in OrderedDict({'z': None, 't': None}).items():
+        if levels is None:
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx],
+                dims=['time', 'lat', 'lon'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon},
+                name=var
+            ))
+            lev_idx += 1
+        else:
+            nlevs = len(levels)
+            fcs.append(xr.DataArray(
+                preds[:, :, :, lev_idx:lev_idx+nlevs],
+                dims=['time', 'lat', 'lon', 'level'],
+                coords={'time': dg.valid_time, 'lat': dg.ds.lat, 'lon': dg.ds.lon, 'level': levels},
+                name=var
+            ))
+            lev_idx += nlevs
+    return xr.merge(fcs)
 
-with strategy.scope():
-    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 2))
+filt = [64]
+kern = [5]
 
-    cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
+for i in range(int(block_no)):
+    filt.append(64)
+    kern.append(5)
 
-    print(cnn.summary())
+filt.append(2)
+kern.append(5)
 
-cnn.fit(dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[tf.keras.callbacks.EarlyStopping(
+cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5, dr = 0.1)
+
+cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+
+print(cnn.summary())
+
+early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=2,
+                        patience=5,
                         verbose=1, 
                         mode='auto'
-                    )]
-         )
+                    )
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_train_72.h5')
+reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor = 'val_loss',
+            patience=2,
+            factor=0.2,
+            verbose=1)
+
+"""
+cnn.fit(dg_train, epochs=100, validation_data=dg_valid, 
+          callbacks=[early_stopping_callback, reduce_lr_callback]
+         )
+"""
+
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_train_res_do_' + str(block_no) + '.h5')
+
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+for j in range(number_of_forecasts):
+    output = create_predictions(cnn, dg_test)
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_train_res_do_' + str(block_no)
+np.save(filename_2 + '.npy', pred_ensemble)

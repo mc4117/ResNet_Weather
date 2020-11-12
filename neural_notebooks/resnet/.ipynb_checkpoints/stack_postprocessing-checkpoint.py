@@ -9,13 +9,7 @@ import re
 
 import generate_data as gd
 
-# resnet/whole_mm_indiv_data.py using 5 blocks
-
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
-
-z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
-t850_valid = load_test_data(f'{DATADIR}temperature_850', 't')
-valid = xr.merge([z500_valid, t850_valid])
 
 # For the data generator all variables have to be merged into a single dataset.
 var_dict = {
@@ -28,6 +22,7 @@ ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in
 ds_whole = xr.merge(ds, compat = 'override')
 
 # load all training data
+ds_train = ds_whole.sel(time=slice('1979', '2016'))
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
@@ -94,7 +89,7 @@ class DataGenerator(keras.utils.Sequence):
         self.on_epoch_end()
 
         # For some weird reason calling .load() earlier messes up the mean and std computations
-        if load: print('Loading data into RAM'); self.data.load()
+        #if load: print('Loading data into RAM'); self.data.load()
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -113,160 +108,147 @@ class DataGenerator(keras.utils.Sequence):
         if self.shuffle == True:
             np.random.shuffle(self.idxs)        
             
-import re
-
 bs=32
 lead_time=72
 output_vars = ['z_500', 't_850']
 
-txt = open('dg_train.txt').read()
-output = [i.split(': ') for i in txt.split('\n')]
 
-output_mean = [float(output[0][1]), float(output[1][1])]
-output_std = [float(output[2][1]), float(output[3][1])]
+temp_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_temp_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
+geo_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
+
+sh_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_specific_humidity_[300, 500, 600, 700, 850, 925, 1000]_preds_newtest.nc')
+pv_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newtest.nc')
+const_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
+temp_2m_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
+
+# Create a training and validation data generator. Use the train mean and std for validation as well.
+dg_train = DataGenerator(
+    ds_train.sel(time=slice('1979', '2013')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+
+#dg_valid2 = DataGenerator(
+#    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+
+dg_valid = DataGenerator(
+    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
-dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=output_mean, std=output_std,
+dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std,
                          shuffle=False, output_vars=output_vars)
 
-pred_ensemble_1 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_specific_humidity.npy')
-pred_ensemble_2 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_2m temp.npy')
-#pred_ensemble_3 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_solar rad.npy')
-pred_ensemble_4 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_pot_vort.npy')
-pred_ensemble_5 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_const.npy')
-#pred_ensemble_6 = np.load('/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_indiv_data_do_5_orig.npy')
+X1, y1 = dg_valid[0]
 
-samples = 20
-preds_sh = xr.Dataset({
+for i in range(1, len(dg_valid)):
+    X2, y2 = dg_valid[i]
+    X1 = np.concatenate((X1, X2))
+    y1 = np.concatenate((y1, y2)) 
+
+real_unnorm =y1* dg_valid.std.isel(level=dg_valid.output_idxs).values+dg_test.mean.isel(level=dg_valid.output_idxs).values
+
+real_ds = xr.Dataset({
     'z': xr.DataArray(
-        pred_ensemble_1[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': np.arange(samples), 
+        real_unnorm[..., 0],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     ),
     't': xr.DataArray(
-        pred_ensemble_1[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': np.arange(samples), 
+        real_unnorm[..., 1],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     )
 })
 
 
-preds_2mtemp = xr.Dataset({
+
+# read in outputs
+
+temp_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+geo_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+
+sh = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_specific_humidity_[300, 500, 600, 700, 850, 925, 1000]_preds_newval.nc')
+pv = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newval.nc')
+const = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newval.nc')
+temp_2m = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_2m_temp_None_preds_newval.nc')
+
+pv_rearranged = xr.Dataset({
     'z': xr.DataArray(
-        pred_ensemble_2[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 20+ np.arange(samples), 
+        pv.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     ),
     't': xr.DataArray(
-        pred_ensemble_2[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 20+ np.arange(samples), 
+        pv.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     )
 })
 
-
-preds_pv = xr.Dataset({
+temp_2m_rearranged = xr.Dataset({
     'z': xr.DataArray(
-        pred_ensemble_4[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 40+ np.arange(samples), 
+        temp_2m.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     ),
     't': xr.DataArray(
-        pred_ensemble_4[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 40 + np.arange(samples), 
+        temp_2m.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     )
 })
 
-preds_const = xr.Dataset({
-    't': xr.DataArray(
-        pred_ensemble_5[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 60+ np.arange(samples), 
+temp_levels_rearranged = xr.Dataset({
+    'z': xr.DataArray(
+        temp_levels.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     ),
-    'z': xr.DataArray(
-        pred_ensemble_5[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 60 + np.arange(samples), 
+    't': xr.DataArray(
+        temp_levels.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
                 },
     )
 })
 
-"""
-preds_orig = xr.Dataset({
-    'z': xr.DataArray(
-        pred_ensemble_6[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 80+ np.arange(20), 
-                },
-    ),
-    't': xr.DataArray(
-        pred_ensemble_6[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 80 + np.arange(20), 
-                },
-    )
-})
+mean_z_t = dg_test.mean.isel(level=dg_test.output_idxs).values
+std_z_t = dg_test.std.isel(level=dg_test.output_idxs).values
 
+print(compute_weighted_rmse(temp_levels_rearranged, real_ds))
+print(compute_weighted_rmse(geo_levels, real_ds))
+print(compute_weighted_rmse(sh, real_ds))
+print(compute_weighted_rmse(pv_rearranged, real_ds))
+print(compute_weighted_rmse(const, real_ds))
+print(compute_weighted_rmse(temp_2m_rearranged, real_ds))
 
-preds_sr = xr.Dataset({
-    'z': xr.DataArray(
-        pred_ensemble_3[0, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 100 + np.arange(samples), 
-                },
-    ),
-    't': xr.DataArray(
-        pred_ensemble_3[1, ...],
-        dims=['time', 'lat', 'lon', 'ens'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon, 'ens': 100 + np.arange(samples), 
-                },
-    )
-})
-"""
+temp_norm = (np.transpose(temp_levels_rearranged.to_array().data, axes = [1, 2, 3, 0]) - mean_z_t)/std_z_t
+geo_norm = (np.transpose(geo_levels.to_array().data, axes = [1, 2, 3, 0]) - mean_z_t)/std_z_t
 
-X1, y1 = dg_test[0]
+sh_norm = (np.transpose(sh.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+pv_norm = (np.transpose(pv_rearranged.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+const_norm = (np.transpose(const.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+temp_2m_norm = (np.transpose(temp_2m_rearranged.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
 
-for i in range(1, len(dg_test)):
-    X2, y2 = dg_test[i]
-    y1 = np.concatenate((y1, y2))  
+stack_test_list = [temp_norm, geo_norm, temp_2m_norm, sh_norm, pv_norm, const_norm]
 
-mean = output_mean
-std = output_std
-
-stack_test_list = []
-
-for i in range(12):
-    stack_test_list.append((np.transpose(preds_sh.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)
-for i in range(12):
-    stack_test_list.append((np.transpose(preds_2mtemp.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)
-for i in range(12):
-    stack_test_list.append((np.transpose(preds_pv.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)
-for i in range(12):
-    stack_test_list.append((np.transpose(preds_const.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)
-#for i in range(len(preds_sr.ens)):
-#    stack_test_list.append((np.transpose(preds_sr.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)
-#for i in range(len(preds_orig.ens)):
-#    stack_test_list.append((np.transpose(preds_orig.isel(ens = i).to_array().data, axes = [1, 2, 3, 0]) - mean)/std)    
 from tensorflow.keras.layers import concatenate
 
-#def my_init(shape, dtype=None):
-#    print(shape)
-#    return tf.ones(shape, dtype=dtype)/48
+def my_init(shape, dtype=None):
+    print(shape)
+    return tf.ones(shape, dtype=dtype)/6
 
 def build_stack_model(input_shape, stack_list):
     # concatenate merge output from each model
     input_list = [Input(shape=input_shape) for i in range(len(stack_list))]
     merge = concatenate(input_list)
-    hidden = Dense(48, activation='relu')(merge)
-    output = Dense(2)(hidden)
+    hidden = Dense(25, activation='relu', kernel_initializer = my_init)(merge)
+    normalize2 = BatchNormalization()(hidden)
+    output = Dense(2)(normalize2)
     return keras.models.Model(input_list, output)
 
 ensemble_model = build_stack_model((32, 64, 2), stack_test_list)
@@ -276,19 +258,170 @@ ensemble_model.compile(keras.optimizers.Adam(1e-4), 'mse')
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=5,
+                        patience=10,
                         verbose=1, 
                         mode='auto'
                     )
 
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             monitor = 'val_loss',
-            patience=2,
+            patience=3,
             factor=0.2,
             verbose=1)  
 
-ensemble_model.fit(x = stack_test_list, y = y1, epochs = 800, validation_split = 0.2, shuffle = True
+"""
+ensemble_model.fit(x = stack_test_list, y = y1, epochs = 600, validation_split = 0.2, shuffle = True
                   , callbacks = [early_stopping_callback, reduce_lr_callback
                     ])
 
-ensemble_model.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/stacked_model_new.h5')
+ensemble_model.save_weights('stacked_val_comb_9_with2m.h5')
+
+fc = ensemble_model.predict(stack_test_list)
+preds_un = xr.DataArray(
+        fc,
+        dims=['time', 'lat', 'lon', 'level'],
+        coords={'time': dg_valid.valid_time, 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
+                'level': dg_valid.data.isel(level=dg_valid.output_idxs).level,
+                'level_names': dg_valid.data.isel(level=dg_valid.output_idxs).level_names
+               },
+    )
+# Unnormalize
+preds = preds_un * std_z_t + mean_z_t
+unique_vars = list(set([l.split('_')[0] for l in preds.level_names.values])); unique_vars
+
+das = []
+for v in unique_vars:
+        idxs = [i for i, vv in enumerate(preds.level_names.values) if vv.split('_')[0] in v]
+        #print(v, idxs)
+        da = preds.isel(level=idxs).squeeze().drop('level_names')
+        if not 'level' in da.dims: da.drop('level')
+        das.append({v: da})
+fc_unnorm = xr.merge(das, compat = 'override').drop('level')
+
+print(compute_weighted_rmse(fc_unnorm, real_ds).compute())
+
+print(compute_weighted_rmse((geo_levels + temp_levels + sh + const + pv + temp_2m)/6, real_ds))
+
+print(compute_weighted_rmse((geo_levels + temp_levels + sh + const + pv)/5, real_ds))
+"""
+
+ensemble_model.load_weights('stacked_val_comb_9_with2m.h5')
+
+X1, y1_test = dg_test[0]
+
+for i in range(1, len(dg_test)):
+    X2, y2 = dg_test[i]
+    X1 = np.concatenate((X1, X2))
+    y1_test = np.concatenate((y1_test, y2)) 
+
+real_unnorm_test =y1_test* dg_test.std.isel(level=dg_test.output_idxs).values+dg_test.mean.isel(level=dg_test.output_idxs).values
+
+real_ds_test = xr.Dataset({
+    'z': xr.DataArray(
+        real_unnorm_test[..., 0],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    ),
+    't': xr.DataArray(
+        real_unnorm_test[..., 1],
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    )
+})
+
+
+# read in outputs
+
+temp_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_temp_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
+geo_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
+
+sh_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_specific_humidity_[300, 500, 600, 700, 850, 925, 1000]_preds_newtest.nc')
+pv_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newtest.nc')
+const_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
+temp_2m_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
+
+pv_rearranged_test = xr.Dataset({
+    'z': xr.DataArray(
+        pv_test.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    ),
+    't': xr.DataArray(
+        pv_test.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    )
+})
+
+temp_levels_rearranged_test = xr.Dataset({
+    'z': xr.DataArray(
+        temp_levels_test.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    ),
+    't': xr.DataArray(
+        temp_levels_test.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    )
+})
+
+geo_levels_rearranged_test = xr.Dataset({
+    'z': xr.DataArray(
+        geo_levels_test.z.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    ),
+    't': xr.DataArray(
+        geo_levels_test.t.values,
+        dims=['time', 'lat', 'lon'],
+        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                },
+    )
+})
+
+temp_test_norm = (np.transpose(temp_levels_rearranged_test.to_array().data, axes = [1, 2, 3, 0]) - mean_z_t)/std_z_t
+geo_test_norm = (np.transpose(geo_levels_rearranged_test.to_array().data, axes = [1, 2, 3, 0])- mean_z_t)/std_z_t
+
+sh_test_norm = (np.transpose(sh_test.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+pv_test_norm = (np.transpose(pv_rearranged_test.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+const_test_norm = (np.transpose(const_test.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+test_2m_norm = (np.transpose(temp_2m_test.to_array().data, axes = [1, 2, 3, 0])-mean_z_t)/std_z_t
+
+
+stack_test_data_list = [temp_test_norm, geo_test_norm, test_2m_norm, sh_test_norm, pv_test_norm, const_test_norm]
+
+fc_test = ensemble_model.predict(stack_test_data_list)
+preds_un = xr.DataArray(
+        fc_test,
+        dims=['time', 'lat', 'lon', 'level'],
+        coords={'time': dg_test.valid_time, 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                'level': dg_test.data.isel(level=dg_test.output_idxs).level,
+                'level_names': dg_test.data.isel(level=dg_test.output_idxs).level_names
+               },
+    )
+# Unnormalize
+preds = preds_un * std_z_t + mean_z_t
+unique_vars = list(set([l.split('_')[0] for l in preds.level_names.values])); unique_vars
+
+das = []
+for v in unique_vars:
+    idxs = [i for i, vv in enumerate(preds.level_names.values) if vv.split('_')[0] in v]
+    da = preds.isel(level=idxs).squeeze().drop('level_names')
+    if not 'level' in da.dims: da.drop('level')
+    das.append({v: da})
+fc_unnorm_test = xr.merge(das, compat = 'override').drop('level')
+ 
+print(compute_weighted_rmse(fc_unnorm_test, real_ds_test).compute())
+
+print(compute_weighted_rmse((temp_levels_test + geo_levels_test + temp_2m_test + sh_test + const_test + pv_test)/6, real_ds_test).compute())
+
+print(compute_weighted_rmse((temp_levels_test + geo_levels_test + sh_test + const_test + pv_test)/5, real_ds_test).compute())
+

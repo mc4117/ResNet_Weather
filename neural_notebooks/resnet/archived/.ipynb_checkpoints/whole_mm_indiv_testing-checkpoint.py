@@ -8,6 +8,13 @@ from src.score import *
 import re
 from collections import OrderedDict
 
+import sys
+print("Script name ", sys.argv[0])
+
+var_name = sys.argv[1]
+
+print(var_name)
+
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
@@ -16,14 +23,30 @@ print('Found GPU at: {}'.format(device_name))
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 # For the data generator all variables have to be merged into a single dataset.
-var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
-}
+if var_name == 'specific_humidity':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'specific_humidity': ('q', [500, 850])}
+elif var_name == 'pot_vort':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'potential_vorticity': ('pv', [500, 850])}
+elif var_name == 'const':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'constants': ['lat2d', 'orography', 'lsm']}
+elif var_name == 'geo':
+    var_dict = {
+        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
+        'temperature': ('t', [850])} 
+elif var_name == 'temp':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [300, 400, 500, 600, 700, 850])}
+
 
 ds_list = []
 
@@ -37,9 +60,8 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-print('got here')
-
-ds_whole = xr.merge(ds_list)
+# have to remove first 7 data points
+ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
@@ -135,9 +157,13 @@ output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
-dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2013')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+
+#dg_valid = DataGenerator(
+#    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+
+#dg_valid2 = DataGenerator(
+#    ds_train.sel(time=slice('2014', '2014')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
@@ -192,7 +218,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict_generator(dg),
+        model.predict(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -244,53 +270,41 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
-checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
-model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    filepath=checkpoint_filepath,
-    save_weights_only=True,
-    monitor='val_loss',
-    mode='min',
-    save_best_only=True)
+if var_name == 'specific_humidity':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
+elif var_name == 'pot_vort':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
+elif var_name == 'const':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 5), l2 = 1e-5, dr = 0.1)
+elif var_name == 'geo':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
+elif var_name == 'temp':
+    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 7), l2 = 1e-5, dr = 0.1)
 
-early_stopping_callback = tf.keras.callbacks.EarlyStopping(
-                        monitor='val_loss',
-                        min_delta=0,
-                        patience=5,
-                        verbose=1, 
-                        mode='auto'
-                    )
+cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
-reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor = 'val_loss',
-            patience=2,
-            factor=0.2,
-            verbose=1)
+print(cnn.summary())
 
-
-for i in range(2, 4):
-    cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 10), l2 = 1e-5, dr = 0.1)
-
-    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
-
-    print(cnn.summary())
-
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
+"""
+cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid2,
+          callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_5_' + str(i)
-    cnn.save_weights(filename + '.h5')    
+"""
 
-    number_of_forecasts = 12
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_valid_do_5_' + str(var_name)
+cnn.load_weights(filename + '.h5')    
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+number_of_forecasts = 20
 
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_5_' + str(i)
-        np.save(filename_2 + '.npy', pred_ensemble)
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_test)
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_testing_do_5_' + str(var_name)
+np.save(filename_2 + '.npy', pred_ensemble)

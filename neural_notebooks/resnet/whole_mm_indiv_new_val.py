@@ -1,3 +1,5 @@
+# Splits data into four sets - predicts for both dg_valid2 which is then fed into stacked model and for dg_test which is the test dating set at the end of the simulation
+
 import argparse
 # defined command line options
 

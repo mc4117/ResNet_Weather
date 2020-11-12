@@ -1,3 +1,7 @@
+no freezing of layers and dropout and lr 1e-3 - 798.1705496
+no freezing of layers and no dropout and lr 1e-3 - 773.92277251
 no freezing of layers and lr 1e-4 - 891.8841476 - job_pretrain_post.o2554217  
 no freezing of layers and lr 1e-5 - 1342.6387773 - job_pretrain_post.o2554807 
 all layers frozen - lr 1e-4 - 3289.5897516 - job_pretrain_post.o2554763  
+bn layers not frozen - lr 1e-4 - 3289.5897516 (gets stuck and predicts the same value)
+bn layers not frozen with do - lr 1e-4 - 3130.65854704

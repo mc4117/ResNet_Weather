@@ -1,3 +1,5 @@
+# mutltimodel resnet including only geo and temp data for optimum levels considered
+
 import argparse
 # defined command line options
 

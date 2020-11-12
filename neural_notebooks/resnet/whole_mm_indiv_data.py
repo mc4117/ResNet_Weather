@@ -1,3 +1,5 @@
+# similar to whole_mm_indiv_data_adv.py but the levels of the other variable included are fixed
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf

@@ -1,3 +1,5 @@
+# attempt at using bagging with more data approach (doesn't work as runs out of memory)
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf

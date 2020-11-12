@@ -1,3 +1,5 @@
+# simple file containing functions to generate data with DataGenerator (used to avoid too much duplication of code)
+
 import numpy as np
 import xarray as xr
 import tensorflow as tf

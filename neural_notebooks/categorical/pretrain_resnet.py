@@ -136,9 +136,9 @@ dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_tra
 resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=(32, 64, 3))
 
 for layer in resnet_model.layers:
-    if isinstance(layer, BatchNormalization):
-        layer.trainable = True
-    else:
+    #if isinstance(layer, BatchNormalization):
+    #    layer.trainable = True
+    #else:
         layer.trainable = False
 
 class PeriodicPadding2D(keras.layers.Layer):
@@ -188,7 +188,7 @@ class PeriodicConv2D(keras.layers.Layer):
         return config
     
 x = resnet_model.output
-x = GlobalAveragePooling2D()(x)
+x = GlobalMaxPooling2D()(x)
 out = Reshape((32, 64, 1))(x)
 out = PeriodicConv2D(100, 5)(out)
 out = LeakyReLU()(out)

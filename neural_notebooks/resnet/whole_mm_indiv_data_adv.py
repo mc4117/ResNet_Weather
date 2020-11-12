@@ -1,3 +1,5 @@
+# Consider original data of z500 and t850 with one other variable. Can specify the levels of this one other variable that are included
+
 import argparse
 # defined command line options
 
@@ -311,14 +313,6 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
     return keras.models.Model(input, output)
 
 
-checkpoint_filepath = '/rds/general/user/mc4117/home/WeatherBench/checkpoint2/'
-model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    filepath=checkpoint_filepath,
-    save_weights_only=True,
-    monitor='val_loss',
-    mode='min',
-    save_best_only=True)
-
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -361,7 +355,7 @@ cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 print(cnn.summary())
 
 cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback, model_checkpoint_callback]
+          callbacks=[early_stopping_callback, reduce_lr_callback]
          )
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
 cnn.save_weights(filename + '.h5')    

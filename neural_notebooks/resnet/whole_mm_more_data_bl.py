@@ -1,3 +1,5 @@
+# Multimodel with 10 data points. Set the number of residual blocks required in the command line
+
 import argparse
 # defined command line options
 

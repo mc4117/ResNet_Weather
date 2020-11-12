@@ -1,3 +1,5 @@
+# file used to process output from multimodel ensemble with 10 data variables
+
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
