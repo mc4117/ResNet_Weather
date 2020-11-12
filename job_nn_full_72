@@ -1,10 +1,9 @@
 #PBS -lwalltime=24:00:00
-#PBS -lselect=1:ncpus=16:mem=96gb:ngpus=4:gpu_type=RTX6000
-
+#PBS -lselect=1:ncpus=40:mem=48gb
 module load anaconda3/personal
 
-source activate testgpu
+source activate test1
 
 cd $PBS_O_WORKDIR/neural_notebooks/resnet/
 
-python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/categorical/datagenerator.py 5
+python /rds/general/user/mc4117/home/NN_WeatherBench/neural_notebooks/categorical/whole_orig_nn_72_non_ohe.py 5

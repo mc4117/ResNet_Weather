@@ -9,9 +9,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 from tensorflow.keras.layers import *
 import tensorflow.keras.backend as K
-from src.score import *
 import re
-from collections import OrderedDict
 
 CLI.add_argument(
   "--block_no",
@@ -30,15 +28,14 @@ print('Found GPU at: {}'.format(device_name))
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
-# For the data generator all variables have to be merged into a single dataset.
 var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
-}
+        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
+        'temperature': ('t', [300, 400, 500, 600, 700, 850]),
+        'specific_humidity': ('q', [500, 850]),
+        'potential_vorticity': ('pv', [150, 250, 300, 700, 850]),
+        'constants': ['lat2d', 'orography', 'lsm']}
+
+print(var_dict)
 
 ds_list = []
 
@@ -52,12 +49,13 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-print('got here')
+# have to remove first 7 data points
+ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
-ds_whole = xr.merge(ds_list)
+print('whole')
 
 # In this notebook let's only load a subset of the training data
-ds_train = ds_whole.sel(time=slice('1979', '2016'))  
+ds_train = ds_whole.sel(time=slice('1987', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 
@@ -148,11 +146,18 @@ bs=32
 lead_time=72
 output_vars = ['z_500', 't_850']
 
+print('training')
+
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2014')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+
+print('valid')
+
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+
+print('test')
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
@@ -207,7 +212,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict_generator(dg),
+        model.predict(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -273,6 +278,7 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+
 filt = [64]
 kern = [5]
 
@@ -283,30 +289,62 @@ for i in range(int(args.block_no)):
 filt.append(2)
 kern.append(5)
 
-for i in range(3, 4):
-    cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
+tot_var = 22
 
-    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
 
-    print(cnn.summary())
+cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+print(cnn.summary())
+
+cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-    cnn.save_weights(filename + '.h5')    
 
-    number_of_forecasts = 12
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_val_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
+cnn.save_weights(filename + '.h5')    
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
 
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-        np.save(filename_2 + '.npy', pred_ensemble)
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17472, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+output_total = 0
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_valid)
+    output_total += output.copy()
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+
+output_avg = output_total/number_of_forecasts
+output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newval.nc')
+    
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
+np.save(filename_2 + '.npy', pred_ensemble)
+
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+output_total2 = 0
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_test)
+    output_total2 += output.copy()
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+
+output_avg2 = output_total2/number_of_forecasts
+output_avg2.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newtest.nc')
+
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_test_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
+np.save(filename_2 + '.npy', pred_ensemble)

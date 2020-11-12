@@ -366,7 +366,7 @@ cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
 print(cnn.summary())
 
-cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid2,
+cnn.fit(x = dg_train, epochs=50, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
 
