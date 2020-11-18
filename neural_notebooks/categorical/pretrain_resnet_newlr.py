@@ -136,10 +136,10 @@ dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_tra
 resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=(32, 64, 3))
 
 for layer in resnet_model.layers:
-    if isinstance(layer, BatchNormalization):
-        layer.trainable = True
-    else:
-        layer.trainable = False
+    layer.trainable = False
+        
+#if isinstance(layer, BatchNormalization):
+#    layer.trainable = True
 
 class PeriodicPadding2D(keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -186,18 +186,20 @@ class PeriodicConv2D(keras.layers.Layer):
         config = super().get_config()
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
-    
+
 x = resnet_model.output
 x = GlobalMaxPooling2D()(x)
-out = Reshape((32, 64, 1))(x)
-out = PeriodicConv2D(100, 5)(out)
-out = LeakyReLU()(out)
-out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
+x = Reshape((32, 64, 1))(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+out = Reshape((32*64, 100), input_shape = (32, 64, 100))(x)
 out = Activation('softmax')(out)
 predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 
 model =  tf.keras.models.Model(resnet_model.input, predictions)
-model.compile(tf.keras.optimizers.Adam(1e-4), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
+model.compile(tf.keras.optimizers.Adam(1e-2), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
 
 """
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
@@ -223,13 +225,12 @@ fc = model.predict(dg_test)
 
 fc_arg = fc.argmax(axis = -1)
 
-print(fc_arg)
+for i in range(100):
+    fc_arg[fc_arg == i] = dg_test.bins_z[i]
+
 print(fc_arg.min())
 print(fc_arg.max())
 
-for i in range(100):
-    fc_arg[fc_arg == i] = dg_test.bins_z[i]
-    
 fc_conv_ds = xr.Dataset({
     'z': xr.DataArray(
         fc_arg,

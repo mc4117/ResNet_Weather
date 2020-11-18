@@ -188,7 +188,7 @@ class PeriodicConv2D(keras.layers.Layer):
         return config
     
 x = resnet_model.output
-x = GlobalAveragePooling2D()(x)
+x = GlobalMaxPooling2D()(x)
 out = Reshape((32, 64, 1))(x)
 out = PeriodicConv2D(100, 5)(out)
 out = LeakyReLU()(out)
@@ -196,11 +196,8 @@ out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
 out = Activation('softmax')(out)
 predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 
-lr = 1e-2
-
 model =  tf.keras.models.Model(resnet_model.input, predictions)
-model.compile(tf.keras.optimizers.Adam(lr), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
-
+model.compile(tf.keras.optimizers.Adam(1e-4), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
 """
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
@@ -219,14 +216,21 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
 model.fit(dg_train, validation_data = dg_valid, epochs  = 100, callbacks = [early_stopping_callback, reduce_lr_callback])
 """
 
-model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical' + str(lr) + '.h5')
+model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical_max.h5')
 
 fc = model.predict(dg_test)
 
 fc_arg = fc.argmax(axis = -1)
 
+print(fc_arg.min())
+print(fc_arg.max())
+
+#np.save('/rds/general/user/mc4117/ephemeral/saved_pred/pretrain_categorical.npy', fc_arg)
+
 for i in range(100):
     fc_arg[fc_arg == i] = dg_test.bins_z[i]
+
+print(fc_arg)
     
 fc_conv_ds = xr.Dataset({
     'z': xr.DataArray(
@@ -234,6 +238,7 @@ fc_conv_ds = xr.Dataset({
         dims=['time', 'lat', 'lon'],
         coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
+
 
 cnn_rmse = compute_weighted_rmse(fc_arg, ds_test.z.sel(level=500)[72:])
 print(cnn_rmse.compute())

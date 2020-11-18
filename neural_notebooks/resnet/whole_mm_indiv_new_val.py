@@ -327,7 +327,7 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=5,
+                        patience=3,
                         verbose=1, 
                         mode='auto'
                     )
@@ -368,7 +368,7 @@ cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
 print(cnn.summary())
 
-cnn.fit(x = dg_train, epochs=50, validation_data=dg_valid2,
+cnn.fit(x = dg_train, epochs=30, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
 

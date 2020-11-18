@@ -192,6 +192,8 @@ x = GlobalAveragePooling2D()(x)
 out = Reshape((32, 64, 1))(x)
 out = PeriodicConv2D(100, 5)(out)
 out = LeakyReLU()(out)
+out = PeriodicConv2D(100, 5)(out)
+out = LeakyReLU()(out)
 out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
 out = Activation('softmax')(out)
 predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
@@ -199,7 +201,6 @@ predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 model =  tf.keras.models.Model(resnet_model.input, predictions)
 model.compile(tf.keras.optimizers.Adam(1e-4), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
 
-"""
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -215,9 +216,8 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 model.fit(dg_train, validation_data = dg_valid, epochs  = 100, callbacks = [early_stopping_callback, reduce_lr_callback])
-"""
 
-model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical.h5')
+model.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical.h5')
 
 fc = model.predict(dg_test)
 

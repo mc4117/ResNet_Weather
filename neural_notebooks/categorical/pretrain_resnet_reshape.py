@@ -188,16 +188,19 @@ class PeriodicConv2D(keras.layers.Layer):
         return config
     
 x = resnet_model.output
-out = Reshape((32, 64, 2))(x)
-out = PeriodicConv2D(100, 5)(out)
-out = LeakyReLU()(out)
-out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
+x = Reshape((32, 64, 2))(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+out = Reshape((32*64, 100), input_shape = (32, 64, 100))(x)
 out = Activation('softmax')(out)
 predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 
 model =  tf.keras.models.Model(resnet_model.input, predictions)
 model.compile(tf.keras.optimizers.Adam(1e-4), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
 
+"""
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
@@ -213,8 +216,9 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 model.fit(dg_train, validation_data = dg_valid, epochs  = 100, callbacks = [early_stopping_callback, reduce_lr_callback])
+"""
 
-model.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical_freeze_nobn2.h5')
+model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical_freeze_nobn2.h5')
 
 fc = model.predict(dg_test)
 
@@ -222,7 +226,10 @@ fc_arg = fc.argmax(axis = -1)
 
 for i in range(100):
     fc_arg[fc_arg == i] = dg_test.bins_z[i]
-    
+
+print(fc_arg.min())
+print(fc_arg.max())
+
 fc_conv_ds = xr.Dataset({
     'z': xr.DataArray(
         fc_arg,

@@ -4,7 +4,6 @@ from tensorflow.keras.applications import ResNet50
 import xarray as xr
 import numpy as np
 from tensorflow import keras
-from src.score import *
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
@@ -18,7 +17,7 @@ ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in
 ds_whole = xr.merge(ds, compat = 'override')
 
 # load all training data
-ds_train = ds_whole.sel(time=slice('1979', '2016'))
+ds_train = ds_whole.sel(time=slice('2015', '2016'))
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
@@ -63,40 +62,48 @@ class DataGenerator(keras.utils.Sequence):
                     data.append(ds[var].expand_dims({'level': generic_level}, 1))
                     level_names.append(var)
 
-        self.data = xr.concat(data, 'level').transpose('time', 'lat', 'lon', 'level')
-        self.data['level_names'] = xr.DataArray(
-            level_names, dims=['level'], coords={'level': self.data.level})
+        data = xr.concat(data, 'level').transpose('time', 'lat', 'lon', 'level')
+        data['level_names'] = xr.DataArray(
+            level_names, dims=['level'], coords={'level': data.level})
         if output_vars is None:
             self.output_idxs = range(len(dg_valid.data.level))
         else:
-            self.output_idxs = [i for i, l in enumerate(self.data.level_names.values)
+            self.output_idxs = [i for i, l in enumerate(data.level_names.values)
                                 if any([bool(re.match(o, l)) for o in output_vars])]
-
-        output_data = self.data.isel(level = self.output_idxs)
-
+        
+        dg_lon = np.concatenate([data.lon.values, data.lon.values + 360,  data.lon.values + 720])
+        
         # Normalize
-        self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
-        self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
-        self.data = (self.data - self.mean) / self.std
+        self.mean = data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
+        self.std = data.std(('time', 'lat', 'lon')).compute() if std is None else std
+            
+        self.periodic_data = xr.DataArray(xr.concat([data, data, data], dim = 'lon'), 
+                                         dims = ['time', 'lat', 'lon', 'level'],
+                                         coords={'time': data.time.values, 'lat': data.lat.values, 'lon': dg_lon, 'level': data.level.values,
+                })
+            
+        output_data = self.periodic_data.isel(level = self.output_idxs)
+
+        self.periodic_data = (self.periodic_data - self.mean) / self.std
 
         self.bins_z = np.linspace(output_data.min(), output_data.max(), 100) if bins_z is None else bins_z
 
         self.binned_data = xr.DataArray(
                np.digitize(output_data[:, :, :, 0], self.bins_z)-1,
                dims=['time', 'lat', 'lon'],
-               coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values
+               coords={'time':self.periodic_data.time.values, 'lat': self.periodic_data.lat.values, 'lon': self.periodic_data.lon.values
                })
 
         del ds
         
-        self.n_samples = self.data.isel(time=slice(0, -lead_time)).shape[0]
-        self.init_time = self.data.isel(time=slice(None, -lead_time)).time
-        self.valid_time = self.data.isel(time=slice(lead_time, None)).time   
-        
+        self.n_samples = self.periodic_data.isel(time=slice(0, -lead_time)).shape[0]
+        self.init_time = self.periodic_data.isel(time=slice(None, -lead_time)).time
+        self.valid_time = self.periodic_data.isel(time=slice(lead_time, None)).time   
+
         self.on_epoch_end()
 
         # For some weird reason calling .load() earlier messes up the mean and std computations
-        if load: print('Loading data into RAM'); self.data.load()
+        if load: print('Loading data into RAM'); self.periodic_data.load()
         if load: print('Loading data into RAM'); self.binned_data.load() 
 
     def __len__(self):
@@ -106,7 +113,7 @@ class DataGenerator(keras.utils.Sequence):
     def __getitem__(self, i):
         'Generate one batch of data'
         idxs = self.idxs[i * self.batch_size:(i + 1) * self.batch_size]
-        X = self.data.isel(time=idxs).values
+        X = self.periodic_data.isel(time=idxs).values
         y = self.binned_data.isel(time=idxs + self.lead_time).values
         return X, y   
     
@@ -115,7 +122,8 @@ class DataGenerator(keras.utils.Sequence):
         self.idxs = np.arange(self.n_samples)
         if self.shuffle == True:
             np.random.shuffle(self.idxs)    
-            
+
+
 import re
 
 bs=32
@@ -124,7 +132,7 @@ output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('2015', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 dg_valid = DataGenerator(
     ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, bins_z = dg_train.bins_z, output_vars = output_vars)
 
@@ -132,14 +140,7 @@ dg_valid = DataGenerator(
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z,
                          shuffle=False, output_vars=output_vars)
 
-
-resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=(32, 64, 3))
-
-#for layer in resnet_model.layers:
-#    #if isinstance(layer, BatchNormalization):
-#    #    layer.trainable = True
-#    #else:
-#    layer.trainable = False
+resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=(32, 192, 3))
 
 class PeriodicPadding2D(keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -186,20 +187,21 @@ class PeriodicConv2D(keras.layers.Layer):
         config = super().get_config()
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
-    
-x = resnet_model.output
-x = GlobalAveragePooling2D()(x)
-out = Reshape((32, 64, 1))(x)
-out = PeriodicConv2D(100, 5)(out)
-out = LeakyReLU()(out)
-out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
-out = Activation('softmax')(out)
-predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 
-lr = 1e-2
+x = resnet_model.output
+x = Reshape((32, 192, 2))(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+#x = BatchNormalization()(x)
+out = Reshape((32*192, 100), input_shape = (32, 192, 100))(x)
+out = Activation('softmax')(out)
+predictions = Reshape((32, 192, 100), input_shape = (32*192, 100))(out)
+
 
 model =  tf.keras.models.Model(resnet_model.input, predictions)
-model.compile(tf.keras.optimizers.Adam(lr), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
+model.compile(tf.keras.optimizers.Adam(1e-4), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
 
 """
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
@@ -216,10 +218,11 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+
 model.fit(dg_train, validation_data = dg_valid, epochs  = 100, callbacks = [early_stopping_callback, reduce_lr_callback])
 """
 
-model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical' + str(lr) + '.h5')
+model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_periodic.h5')
 
 fc = model.predict(dg_test)
 
@@ -227,7 +230,14 @@ fc_arg = fc.argmax(axis = -1)
 
 for i in range(100):
     fc_arg[fc_arg == i] = dg_test.bins_z[i]
-    
+
+print(fc_arg.min())
+print(fc_arg.max())
+print(fc_arg)
+
+np.save('pred_periodic.npy', fc_arg)
+
+"""
 fc_conv_ds = xr.Dataset({
     'z': xr.DataArray(
         fc_arg,
@@ -235,6 +245,6 @@ fc_conv_ds = xr.Dataset({
         coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
 
-cnn_rmse = compute_weighted_rmse(fc_arg, ds_test.z.sel(level=500)[72:])
-print(cnn_rmse.compute())
-
+cnn_rmse = compute_weighted_rmse(fc_arg, ds_test.z.sel(level=500)[72:]).compute()
+print(cnn_rmse)
+"""

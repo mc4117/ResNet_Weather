@@ -135,12 +135,6 @@ dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_tra
 
 resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=(32, 64, 3))
 
-#for layer in resnet_model.layers:
-#    #if isinstance(layer, BatchNormalization):
-#    #    layer.trainable = True
-#    #else:
-#    layer.trainable = False
-
 class PeriodicPadding2D(keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
         super().__init__(**kwargs)
@@ -186,13 +180,15 @@ class PeriodicConv2D(keras.layers.Layer):
         config = super().get_config()
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
-    
+
 x = resnet_model.output
-x = GlobalAveragePooling2D()(x)
-out = Reshape((32, 64, 1))(x)
-out = PeriodicConv2D(100, 5)(out)
-out = LeakyReLU()(out)
-out = Reshape((32*64, 100), input_shape = (32, 64, 100))(out)
+x = GlobalMaxPooling2D()(x)
+x = Reshape((32, 64, 1))(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+x = PeriodicConv2D(100, 5)(x)
+x = LeakyReLU()(x)
+out = Reshape((32*64, 100), input_shape = (32, 64, 100))(x)
 out = Activation('softmax')(out)
 predictions = Reshape((32, 64, 100), input_shape = (32*64, 100))(out)
 
@@ -203,23 +199,23 @@ model.compile(tf.keras.optimizers.Adam(lr), loss = 'sparse_categorical_crossentr
 
 """
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
-                        monitor='val_loss',
+                        monitor='val_sparse_categorical_accuracy',
                         min_delta=0,
-                        patience=10,
+                        patience=12,
                         verbose=1, 
                         mode='auto'
                     )
 
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor = 'val_loss',
-            patience=2,
-            factor=0.2,
+            monitor = 'val_sparse_categorical_accuracy',
+            patience=3,
+            factor=0.5,
             verbose=1)
 
 model.fit(dg_train, validation_data = dg_valid, epochs  = 100, callbacks = [early_stopping_callback, reduce_lr_callback])
 """
 
-model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical' + str(lr) + '.h5')
+model.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/pretrain_categorical_newloss_' + str(lr) + '.h5')
 
 fc = model.predict(dg_test)
 
@@ -227,7 +223,10 @@ fc_arg = fc.argmax(axis = -1)
 
 for i in range(100):
     fc_arg[fc_arg == i] = dg_test.bins_z[i]
-    
+
+print(fc_arg.min())
+print(fc_arg.max())
+
 fc_conv_ds = xr.Dataset({
     'z': xr.DataArray(
         fc_arg,
@@ -235,6 +234,5 @@ fc_conv_ds = xr.Dataset({
         coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
 
-cnn_rmse = compute_weighted_rmse(fc_arg, ds_test.z.sel(level=500)[72:])
-print(cnn_rmse.compute())
-
+cnn_rmse = compute_weighted_rmse(fc_arg, ds_test.z.sel(level=500)[72:]).compute()
+print(cnn_rmse)
