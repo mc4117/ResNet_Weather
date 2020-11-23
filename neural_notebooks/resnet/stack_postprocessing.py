@@ -114,7 +114,7 @@ bs=32
 lead_time=72
 output_vars = ['z_500', 't_850']
 
-
+"""
 temp_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_temp_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
 geo_levels_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newtest.nc')
 
@@ -122,6 +122,7 @@ sh_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred
 pv_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newtest.nc')
 const_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
 temp_2m_test = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newtest.nc')
+"""
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
@@ -164,15 +165,22 @@ real_ds = xr.Dataset({
 
 
 # read in outputs
+temp_levels_19 = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/19_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+#temp_levels_27 = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/27_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+#temp_levels_29 = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+temp_levels_25 = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+temp_levels_21 = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/21_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
+temp_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/23_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
 
-temp_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_temp_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
-geo_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
 
-sh = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_specific_humidity_[300, 500, 600, 700, 850, 925, 1000]_preds_newval.nc')
-pv = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newval.nc')
-const = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newval.nc')
-temp_2m = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_2m_temp_None_preds_newval.nc')
+#geo_levels = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_geo_[300, 400, 500, 600, 700, 850]_preds_newval.nc')
 
+#sh = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_specific_humidity_[300, 500, 600, 700, 850, 925, 1000]_preds_newval.nc')
+#pv = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_pot_vort_[150, 250, 300, 700, 850]_preds_newval.nc')
+#const = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_const_None_preds_newval.nc')
+#temp_2m = xr.open_dataset('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/9_2m_temp_None_preds_newval.nc')
+
+"""
 pv_rearranged = xr.Dataset({
     'z': xr.DataArray(
         pv.z.values,
@@ -202,6 +210,7 @@ temp_2m_rearranged = xr.Dataset({
                 },
     )
 })
+"""
 
 temp_levels_rearranged = xr.Dataset({
     'z': xr.DataArray(
@@ -221,7 +230,21 @@ temp_levels_rearranged = xr.Dataset({
 mean_z_t = dg_test.mean.isel(level=dg_test.output_idxs).values
 std_z_t = dg_test.std.isel(level=dg_test.output_idxs).values
 
+#print('29')
+#print(compute_weighted_rmse(temp_levels_29, real_ds))
+#print('27')
+#print(compute_weighted_rmse(temp_levels_27, real_ds))
+print('25')
+print(compute_weighted_rmse(temp_levels_25, real_ds))
+print('23')
 print(compute_weighted_rmse(temp_levels_rearranged, real_ds))
+print('21')
+print(compute_weighted_rmse(temp_levels_21, real_ds))
+print('19')
+print(compute_weighted_rmse(temp_levels_19, real_ds))
+
+stop
+
 print(compute_weighted_rmse(geo_levels, real_ds))
 print(compute_weighted_rmse(sh, real_ds))
 print(compute_weighted_rmse(pv_rearranged, real_ds))
