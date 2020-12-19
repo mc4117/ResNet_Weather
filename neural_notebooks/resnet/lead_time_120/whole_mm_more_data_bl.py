@@ -1,3 +1,5 @@
+# Multimodel with 10 data points for 5 day prediction. Set the number of residual blocks required in the command line
+
 import argparse
 # defined command line options
 
@@ -52,15 +54,13 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-print('got here')
-
 ds_whole = xr.merge(ds_list)
 
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
-
+# create data generator
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -114,7 +114,6 @@ class DataGenerator(keras.utils.Sequence):
         
         # Normalize
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
-#         self.std = self.data.std('time').mean(('lat', 'lon')).compute() if std is None else std
         self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
         self.data = (self.data - self.mean) / self.std
         
@@ -229,6 +228,9 @@ def create_predictions(model, dg):
     return xr.merge(das, compat = 'override').drop('level')
 
 def convblock(inputs, f, k, l2, dr = 0):
+    """
+    Build one block of residual block
+    """        
     x = inputs
     if l2 is not None:
         x = PeriodicConv2D(f, k, conv_kwargs={
@@ -267,12 +269,14 @@ early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         mode='auto'
                     )
 
+# reduce learning rate when validation loss plateaus
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             monitor = 'val_loss',
             patience=2,
             factor=0.2,
             verbose=1)
 
+# build neural network
 filt = [64]
 kern = [5]
 
@@ -283,7 +287,8 @@ for i in range(int(args.block_no)):
 filt.append(2)
 kern.append(5)
 
-for i in range(2):
+for i in range(4):
+    # train 4 different networks to create multimodel approach
     cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
 
     cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
@@ -296,6 +301,7 @@ for i in range(2):
     filename = '/rds/general/user/mc4117/ephemeral/saved_models_120/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
     cnn.save_weights(filename + '.h5')    
 
+    # create multiple predictions from each training relying on dropout at inference phase
     number_of_forecasts = 12
 
     pred_ensemble=np.ndarray(shape=(2, 17400, 32, 64, number_of_forecasts),dtype=np.float32)

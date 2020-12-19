@@ -1,4 +1,5 @@
-# Multimodel with 10 data points. Set the number of residual blocks required in the command line
+# USED FOR INPUTS FOR STACKING NETWORK
+# Splits data into four sets - predicts for both dg_valid2 which is then fed into stacked model and for dg_test which is the test dating set at the end of the simulation
 
 import argparse
 # defined command line options
@@ -16,31 +17,93 @@ import re
 from collections import OrderedDict
 
 CLI.add_argument(
+  "--level_list",
+  nargs="*",
+  type=int,  # any type/callable can be used here
+  default=None,
+)
+
+CLI.add_argument(
   "--block_no",
   type = int,
   default = 2,
 )
 
+CLI.add_argument(
+  "--var_name",
+  type = str,
+  default = None,
+)
+
 args = CLI.parse_args()
 
+var_name = args.var_name
+print(args.var_name)
 print(args.block_no)
 
+"""
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
+"""
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
+if args.level_list is not None:
+    unique_list = sorted(list(dict.fromkeys(args.level_list)))
+
 # For the data generator all variables have to be merged into a single dataset.
-var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
-}
+if var_name == 'specific_humidity':
+    if args.level_list is None:
+        unique_list = [300, 500, 600, 700, 850, 925, 1000]
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'specific_humidity': ('q', unique_list)}
+elif var_name == '2m_temp':
+    unique_list = None
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        '2m_temperature': ('t2m', None)}
+elif var_name == 'pot_vort':
+    if args.level_list is None:
+        unique_list = [150, 250, 300, 700, 850]  
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'potential_vorticity': ('pv', unique_list)}
+elif var_name == 'const':
+    unique_list	= None
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'constants': ['lat2d', 'orography', 'lsm']}
+elif var_name == 'orig':
+    unique_list	= None
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850])} 
+elif var_name == 'temp':
+    if args.level_list is None:
+        unique_list = [300, 400, 500, 600, 700, 850]
+    else:
+        unique_list.append(850)
+        unique_list = sorted(list(dict.fromkeys(unique_list)))
+    print(unique_list)
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', unique_list)}
+elif var_name == 'geo':
+    if args.level_list is None:
+        unique_list = [300, 400, 500, 600, 700, 850]
+    else:
+        unique_list.append(500)
+        unique_list = sorted(list(dict.fromkeys(unique_list)))
+    var_dict = {
+        'geopotential': ('z', unique_list),
+        'temperature': ('t', [850])}
 
 ds_list = []
 
@@ -55,12 +118,10 @@ for long_var, params in var_dict.items():
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
 ds_whole = xr.merge(ds_list)
-
-# In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
-
+# create data generator
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -150,9 +211,13 @@ output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2013')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+
+dg_valid2 = DataGenerator(
+    ds_train.sel(time=slice('2014', '2014')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
@@ -207,7 +272,7 @@ class PeriodicConv2D(tf.keras.layers.Layer):
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
-        model.predict_generator(dg),
+        model.predict(dg),
         dims=['time', 'lat', 'lon', 'level'],
         coords={'time': dg.valid_time, 'lat': dg.data.lat, 'lon': dg.data.lon, 
                 'level': dg.data.isel(level=dg.output_idxs).level,
@@ -265,7 +330,7 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=5,
+                        patience=3,
                         verbose=1, 
                         mode='auto'
                     )
@@ -288,32 +353,78 @@ for i in range(int(args.block_no)):
 filt.append(2)
 kern.append(5)
 
-for i in range(4):
-    # train 4 different networks to create multimodel approach
-    cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
+if unique_list is not None:
+    if var_name == "temp":
+        tot_var = 1 + len(unique_list)
+    elif var_name == "geo":
+        tot_var = 1 + len(unique_list)
+    else:
+        tot_var = 2 + len(unique_list)
+else:
+    if var_name == 'const':
+        tot_var = len(var_dict) + 2
+    else:
+        tot_var = len(var_dict)
 
-    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+cnn = build_resnet_cnn(filt, kern, (32, 64, tot_var), l2 = 1e-5, dr = 0.1)
 
-    print(cnn.summary())
+cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
 
-    cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
+print(cnn.summary())
+
+"""
+cnn.fit(x = dg_train, epochs=30, validation_data=dg_valid2,
           callbacks=[early_stopping_callback, reduce_lr_callback]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-    cnn.save_weights(filename + '.h5')    
+"""
 
-    # create multiple predictions from each training relying on dropout at inference phase
-    number_of_forecasts = 12
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_val_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
+cnn.load_weights(filename + '.h5')    
 
-    pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
-    print(pred_ensemble.shape)
-    forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+"""
+# create predictions to be fed into stacked neural network (these act as the training data)
+number_of_forecasts = 30
 
-    for j in range(number_of_forecasts):
-        print(j)
-        output = create_predictions(cnn, dg_test)
-        pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
-        pred_ensemble[:,:,:,:,j]=pred2
-        forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-        np.save(filename_2 + '.npy', pred_ensemble)
+pred_ensemble=np.ndarray(shape=(2, 17472, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+output_total = 0
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_valid)
+    output_total += output.copy()
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+
+output_avg = output_total/number_of_forecasts
+output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newval.nc')
+    
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
+np.save(filename_2 + '.npy', pred_ensemble)
+"""
+
+# create predictions to be usedd as test dataset for the stacked neural network
+number_of_forecasts = 30
+
+pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
+print(pred_ensemble.shape)
+forecast_counter=np.zeros(number_of_forecasts,dtype=int)
+
+output_total2 = 0
+
+for j in range(number_of_forecasts):
+    print(j)
+    output = create_predictions(cnn, dg_test)
+    output_total2 += output.copy()
+    pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
+    pred_ensemble[:,:,:,:,j]=pred2
+    forecast_counter[j]=j+1
+
+output_avg2 = output_total2/number_of_forecasts
+output_avg2.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_newtest.nc')
+
+filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_test_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
+np.save(filename_2 + '.npy', pred_ensemble)

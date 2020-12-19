@@ -1,3 +1,4 @@
+# USED FOR INPUTS FOR STACKING NETWORK
 # Splits data into four sets - predicts for both dg_valid2 which is then fed into stacked model and for dg_test which is the test dating set at the end of the simulation
 
 import argparse
@@ -40,10 +41,12 @@ var_name = args.var_name
 print(args.var_name)
 print(args.block_no)
 
+"""
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
+"""
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
@@ -114,14 +117,11 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-# have to remove first 7 data points
-ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
-
-# In this notebook let's only load a subset of the training data
+ds_whole = xr.merge(ds_list)
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
-
+# create data generator
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -294,6 +294,9 @@ def create_predictions(model, dg):
     return xr.merge(das, compat = 'override').drop('level')
 
 def convblock(inputs, f, k, l2, dr = 0):
+    """
+    Build one block of residual block
+    """    
     x = inputs
     if l2 is not None:
         x = PeriodicConv2D(f, k, conv_kwargs={
@@ -332,13 +335,14 @@ early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         mode='auto'
                     )
 
+# reduce learning rate when validation loss plateaus
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             monitor = 'val_loss',
             patience=2,
             factor=0.2,
             verbose=1)
 
-
+# build neural network
 filt = [64]
 kern = [5]
 
@@ -375,7 +379,7 @@ cnn.fit(x = dg_train, epochs=30, validation_data=dg_valid2,
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_do_val_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
 cnn.save_weights(filename + '.h5')    
 
-
+# create predictions to be fed into stacked neural network (these act as the training data)
 number_of_forecasts = 30
 
 pred_ensemble=np.ndarray(shape=(2, 17472, 32, 64, number_of_forecasts),dtype=np.float32)
@@ -398,6 +402,7 @@ output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data
 filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_valid_do_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list)
 np.save(filename_2 + '.npy', pred_ensemble)
 
+# create predictions to be usedd as test dataset for the stacked neural network
 number_of_forecasts = 30
 
 pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)

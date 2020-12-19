@@ -67,14 +67,13 @@ for long_var, params in var_dict.items():
         else:
             ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
 
-# have to remove first 7 data points
-ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
+ds_whole = xr.merge(ds_list)
 
 # In this notebook let's only load a subset of the training data
 ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
-
+# create data generator
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
                  mean=None, std=None, output_vars=None):
@@ -128,7 +127,6 @@ class DataGenerator(keras.utils.Sequence):
         
         # Normalize
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
-#         self.std = self.data.std('time').mean(('lat', 'lon')).compute() if std is None else std
         self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
         self.data = (self.data - self.mean) / self.std
         
@@ -243,6 +241,9 @@ def create_predictions(model, dg):
     return xr.merge(das, compat = 'override').drop('level')
 
 def convblock(inputs, f, k, l2, dr = 0):
+    """
+    Build one block of residual block
+    """       
     x = inputs
     if l2 is not None:
         x = PeriodicConv2D(f, k, conv_kwargs={
@@ -281,13 +282,14 @@ early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         mode='auto'
                     )
 
+# reduce learning rate if validation loss plateaus
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             monitor = 'val_loss',
             patience=2,
             factor=0.2,
             verbose=1)
 
-
+# different number of input channels depending on variable adding
 if var_name == 'specific_humidity':
     cnn = build_resnet_cnn([64, 64, 64, 64, 64, 64, 2], [5, 5, 5, 5, 5, 5, 5], (32, 64, 4), l2 = 1e-5, dr = 0.1)
 elif var_name == 'pot_vort':
@@ -311,6 +313,8 @@ cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid,
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_indiv_data2_do_5_' + str(var_name)
 cnn.save_weights(filename + '.h5')    
 
+
+# create predictions using dropout at inference to create ensemble
 number_of_forecasts = 20
 
 pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)

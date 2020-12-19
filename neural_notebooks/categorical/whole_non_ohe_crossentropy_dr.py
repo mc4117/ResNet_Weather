@@ -16,6 +16,12 @@ print("Script name ", sys.argv[0])
 block_no = sys.argv[1]
 
 
+#device_name = tf.test.gpu_device_name()
+#if device_name != '/device:GPU:0':
+#    raise SystemError('GPU device not found')
+#print('Found GPU at: {}'.format(device_name))
+
+ 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
@@ -34,7 +40,7 @@ ds_train = ds.sel(time=slice('1979', '2016'))
 ds_test = ds.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None, bins_t = None):
+    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None, bins_z = None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -71,9 +77,9 @@ class DataGenerator(keras.utils.Sequence):
         self.init_time = self.data.isel(time=slice(None, -lead_time)).time
         self.valid_time = self.data.isel(time=slice(lead_time, None)).time
         
-        self.bins_t = np.linspace(ds.t.min(), ds.t.max(), 100) if bins_t is None else bins_t
+        self.bins_z = np.linspace(ds.z.min(), ds.z.max(), 100) if bins_z is None else bins_z
 
-        self.binned_data = xr.DataArray(np.digitize(ds.t, self.bins_t)-1, dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
+        self.binned_data = xr.DataArray(np.digitize(ds.z, self.bins_z)-1, dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
 
         del ds
         self.on_epoch_end()
@@ -110,10 +116,10 @@ dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False)
+    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False)
 
 dg_test = DataGenerator(
-    ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False)
+    ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -202,11 +208,10 @@ for i in range(int(block_no)):
 filt.append(1)
 kern.append(5)
 
-cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5)
+cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5, dr = 0.1)
 print(cnn.summary())
 
 cnn.compile(keras.optimizers.Adam(5e-5), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
-
 
 print(cnn.summary())
 
@@ -224,43 +229,35 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+"""
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid, callbacks=[early_stopping_callback, reduce_lr_callback])
+"""
 
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_dr_' + str(block_no) + '.h5')
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_t_' + str(block_no) + '.h5')
+no_of_forecasts = 30
 
-fc = cnn.predict(dg_test)
+rmse_list = []
+fc_all = []
 
-fc_arg = fc.argmax(axis = -1)
+for i in range(no_of_forecasts):
+    bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
 
-for i in range(100):
-    fc_arg[fc_arg == i] = dg_test.bins_t[i]
-    
+    fc = cnn.predict(dg_test)
 
-fc_conv_ds = xr.Dataset({
-    't': xr.DataArray(
-        fc_arg,
-        dims=['time', 'lat', 'lon'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+    fc_arg_avg = fc.argmax(axis = -1)
+
+    for i in range(99):
+        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
+
+    fc_conv_ds_avg = xr.Dataset({
+        'z': xr.DataArray(
+              fc_arg_avg,
+               dims=['time', 'lat', 'lon'],
+               coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
+    fc_all.append(fc_conv_ds_avg)
+cnn_rmse_arg = compute_weighted_rmse(fc_all/(i+1), ds_test.z[72:]).compute()
+rmse_list.append(cnn_rmse_arg)
 
-cnn_rmse = compute_weighted_rmse(fc_conv_ds, ds_test.t[72:])
-print(cnn_rmse.compute())
-
-bins_t_avg = [(dg_test.bins_t[i] + dg_test.bins_t[i+1])/2 for i in range(len(dg_test.bins_t)-1)]
-
-fc_arg_avg = fc.argmax(axis = -1)
-
-for i in range(99):
-    fc_arg_avg[fc_arg_avg == i] = bins_t_avg[i]
-
-fc_conv_ds_avg = xr.Dataset({
-    't': xr.DataArray(
-        fc_arg_avg,
-        dims=['time', 'lat', 'lon'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
-                })})
-
-cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.t[72:])
-print(cnn_rmse_arg.compute())
-
+print(rmse_list)

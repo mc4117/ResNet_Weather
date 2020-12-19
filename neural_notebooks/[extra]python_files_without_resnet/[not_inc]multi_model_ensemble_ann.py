@@ -1,9 +1,6 @@
-# Multimodel with 10 data points. Set the number of residual blocks required in the command line
+# In this file we experiment with using a multimodel dropout approach on a simple neural network.
 
-import argparse
-# defined command line options
-
-CLI=argparse.ArgumentParser()
+# For speed instead of using the full dataset we only use yearly data  
 
 import numpy as np
 import xarray as xr
@@ -13,53 +10,19 @@ from tensorflow.keras.layers import *
 import tensorflow.keras.backend as K
 from src.score import *
 import re
-from collections import OrderedDict
-
-CLI.add_argument(
-  "--block_no",
-  type = int,
-  default = 2,
-)
-
-args = CLI.parse_args()
-
-print(args.block_no)
 
 device_name = tf.test.gpu_device_name()
 if device_name != '/device:GPU:0':
     raise SystemError('GPU device not found')
 print('Found GPU at: {}'.format(device_name))
 
-DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
+def limit_mem():
+    """By default TF uses all available GPU memory. This function prevents this."""
+    config = tf.compat.v1.ConfigProto()
+    config.gpu_options.allow_growth = True
+    tf.compat.v1.Session(config=config)
 
-# For the data generator all variables have to be merged into a single dataset.
-var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    'constants': ['lsm', 'orography']
-}
-
-ds_list = []
-
-for long_var, params in var_dict.items():
-    if long_var == 'constants':
-        ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-    else:
-        var, levels = params
-        if levels is not None:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords').sel(level = levels))
-        else:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-
-ds_whole = xr.merge(ds_list)
-
-# In this notebook let's only load a subset of the training data
-ds_train = ds_whole.sel(time=slice('1979', '2016'))  
-ds_test = ds_whole.sel(time=slice('2017', '2018'))
-
+limit_mem()
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -143,20 +106,40 @@ class DataGenerator(keras.utils.Sequence):
         self.idxs = np.arange(self.n_samples)
         if self.shuffle == True:
             np.random.shuffle(self.idxs)
+    
+DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
+
+var_dict = {
+    'geopotential': ('z', [500, 850]),
+    'temperature': ('t', [500, 850]),
+    'specific_humidity': ('q', [850]),
+    '2m_temperature': ('t2m', None),
+    'potential_vorticity': ('pv', [50, 100]),
+    'constants': ['lsm', 'orography']
+}
+
+ds = [xr.open_mfdataset(f'{DATADIR}/{var}/*.nc', combine='by_coords') for var in var_dict.keys()]
+
+ds_whole = xr.merge(ds)
+
+ds_train = ds_whole.sel(time=slice('2014', '2015'))
+ds_valid = ds_whole.sel(time=slice('2016', '2016'))
+ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 bs=32
 lead_time=72
 output_vars = ['z_500', 't_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
-dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
-dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False, output_vars = output_vars)
+dg_train = DataGenerator(ds_train, var_dict, lead_time, batch_size=bs, load=True, 
+                         output_vars=output_vars)
+dg_valid = DataGenerator(ds_valid, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
+                         shuffle=False, output_vars=output_vars)
 
-# Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, 
                          shuffle=False, output_vars=output_vars)
+
+
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -204,6 +187,17 @@ class PeriodicConv2D(tf.keras.layers.Layer):
         config.update({'filters': self.filters, 'kernel_size': self.kernel_size, 'conv_kwargs': self.conv_kwargs})
         return config
     
+def build_cnn(filters, kernels, input_shape, dr=0):
+    """Fully convolutional network"""
+    x = input = Input(shape=input_shape)
+    for f, k in zip(filters[:-1], kernels[:-1]):
+        x = PeriodicConv2D(f, k)(x)
+        x = LeakyReLU()(x)
+        x = BatchNormalization()(x)
+        if dr > 0: x = Dropout(dr)(x, training = True)
+    output = PeriodicConv2D(filters[-1], kernels[-1])(x)
+    return keras.models.Model(input, output)
+
 def create_predictions(model, dg):
     """Create non-iterative predictions"""
     preds = xr.DataArray(
@@ -228,82 +222,26 @@ def create_predictions(model, dg):
         das.append({v: da})
     return xr.merge(das, compat = 'override').drop('level')
 
-def convblock(inputs, f, k, l2, dr = 0):
-    """
-    Build one block of residual block
-    """    
-    x = inputs
-    if l2 is not None:
-        x = PeriodicConv2D(f, k, conv_kwargs={
-            'kernel_regularizer': keras.regularizers.l2(l2)})(x) 
-    else:
-        x = PeriodicConv2D(f, k)(x)
-    x = LeakyReLU()(x)
-    x = BatchNormalization()(x)
-    if dr>0: x = Dropout(dr)(x, training = True)
+for i in range(10):
+    cnn = build_cnn([64, 64, 64, 64, 2], [5, 5, 5, 5, 5], (32, 64, 10), dr = 0.1)
 
-    return x
-
-def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = True):
-    """Fully convolutional residual network"""
-
-    x = input = Input(shape=input_shape)
-    x = convblock(x, filters[0], kernels[0], dr)
-
-    #Residual blocks
-    for f, k in zip(filters[1:-1], kernels[1:-1]):
-        y = x
-        for _ in range(2):
-            x = convblock(x, f, k, l2, dr)
-        if skip: x = Add()([y, x])
-
-    output = PeriodicConv2D(filters[-1], kernels[-1])(x)
-    
-    return keras.models.Model(input, output)
-
-
-early_stopping_callback = tf.keras.callbacks.EarlyStopping(
-                        monitor='val_loss',
-                        min_delta=0,
-                        patience=5,
-                        verbose=1, 
-                        mode='auto'
-                    )
-
-# reduce learning rate when validation loss plateaus
-reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
-            monitor = 'val_loss',
-            patience=2,
-            factor=0.2,
-            verbose=1)
-
-# build neural network
-filt = [64]
-kern = [5]
-
-for i in range(int(args.block_no)):
-    filt.append(64)
-    kern.append(5)
-
-filt.append(2)
-kern.append(5)
-
-for i in range(4):
-    # train 4 different networks to create multimodel approach
-    cnn = build_resnet_cnn(filt, kern, (32, 64, 10), l2 = 1e-5, dr = 0.1)
-
-    cnn.compile(keras.optimizers.Adam(5e-5), 'mse')
+    cnn.compile(keras.optimizers.Adam(1e-4), 'mse')
 
     print(cnn.summary())
 
     cnn.fit(x = dg_train, epochs=100, validation_data=dg_valid, 
-          callbacks=[early_stopping_callback, reduce_lr_callback]
+          callbacks=[tf.keras.callbacks.EarlyStopping(
+                        monitor='val_loss',
+                        min_delta=0,
+                        patience=2,
+                        verbose=1, 
+                        mode='auto'
+                    )]
          )
-    filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-    cnn.save_weights(filename + '.h5')    
+    #filename = '/rds/general/user/mc4117/ephemeral/saved_models/train_72_multi_data_gpu_' + str(i)
+    #cnn.save_weights(filename + '.h5')    
 
-    # create multiple predictions from each training relying on dropout at inference phase
-    number_of_forecasts = 12
+    number_of_forecasts = 13
 
     pred_ensemble=np.ndarray(shape=(2, 17448, 32, 64, number_of_forecasts),dtype=np.float32)
     print(pred_ensemble.shape)
@@ -315,5 +253,6 @@ for i in range(4):
         pred2 = np.asarray(output.to_array(), dtype=np.float32).squeeze()
         pred_ensemble[:,:,:,:,j]=pred2
         forecast_counter[j]=j+1
-        filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/whole_res_more_data_do_' + str(args.block_no) + '_' + str(i)
-        np.save(filename_2 + '.npy', pred_ensemble)
+    filename_2 = '/rds/general/user/mc4117/ephemeral/saved_pred/train_72_multi_data_gpu_' + str(i)
+    np.save(filename_2 + '.npy', pred_ensemble)
+    
