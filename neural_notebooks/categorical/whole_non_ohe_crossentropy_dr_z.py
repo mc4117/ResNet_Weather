@@ -24,37 +24,23 @@ block_no = sys.argv[1]
  
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
+z500_valid = load_test_data(f'{DATADIR}geopotential_500', 'z')
+t850_valid = load_test_data(f'{DATADIR}temperature_850', 't')
+valid = xr.merge([z500_valid, t850_valid])
+
+z = xr.open_mfdataset(f'{DATADIR}geopotential_500/*.nc', combine='by_coords')
+t = xr.open_mfdataset(f'{DATADIR}temperature_850/*.nc', combine='by_coords').drop('level')
+
 # For the data generator all variables have to be merged into a single dataset.
-var_dict = {
-    'geopotential': ('z', [500, 850]),
-    'temperature': ('t', [500, 850]),
-    'specific_humidity': ('q', [850]),
-    '2m_temperature': ('t2m', None),
-    'potential_vorticity': ('pv', [50, 100]),
-    #'constants': ['lsm'] #, 'orography']
-}
-
-ds_list = []
-
-for long_var, params in var_dict.items():
-    if long_var == 'constants':
-        ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-    else:
-        var, levels = params
-        if levels is not None:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords').sel(level = levels))
-        else:
-            ds_list.append(xr.open_mfdataset(f'{DATADIR}/{long_var}/*.nc', combine='by_coords'))
-
-ds_whole = xr.merge(ds_list)
+datasets = [z, t]
+ds = xr.merge(datasets)
 
 # In this notebook let's only load a subset of the training data
-ds_train = ds_whole.sel(time=slice('1979', '2016'))  
-ds_test = ds_whole.sel(time=slice('2017', '2018'))
+ds_train = ds.sel(time=slice('1979', '2016'))  
+ds_test = ds.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
-    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
-                 mean=None, std=None, output_vars= None, bins_z = None):
+    def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, mean=None, std=None, bins_z = None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -68,7 +54,6 @@ class DataGenerator(keras.utils.Sequence):
             mean: If None, compute mean from data.
             std: If None, compute standard deviation from data.
         """
-        
         self.ds = ds
         self.var_dict = var_dict
         self.batch_size = batch_size
@@ -76,36 +61,14 @@ class DataGenerator(keras.utils.Sequence):
         self.lead_time = lead_time
 
         data = []
-        level_names = []
         generic_level = xr.DataArray([1], coords={'level': [1]}, dims=['level'])
-        for long_var, params in var_dict.items():
-            if long_var == 'constants': 
-                for var in params:
-                    data.append(ds[var].expand_dims(
-                        {'level': generic_level, 'time': ds.time}, (1, 0)
-                    ))
-                    level_names.append(var)
-            else:
-                var, levels = params
-                try:
-                    data.append(ds[var].sel(level=levels))
-                    level_names += [f'{var}_{level}' for level in levels]
-                except ValueError:
-                    data.append(ds[var].expand_dims({'level': generic_level}, 1))
-                    level_names.append(var)   
+        for var, levels in var_dict.items():
+            try:
+                data.append(ds[var].sel(level=levels))
+            except ValueError:
+                data.append(ds[var].expand_dims({'level': generic_level}, 1))
 
         self.data = xr.concat(data, 'level').transpose('time', 'lat', 'lon', 'level')
-        self.data['level_names'] = xr.DataArray(
-            level_names, dims=['level'], coords={'level': self.data.level})
-        if output_vars is None:
-            self.output_idxs = range(len(dg_valid.data.level))
-        else:
-            self.output_idxs = [i for i, l in enumerate(self.data.level_names.values) 
-                                if any([bool(re.match(o, l)) for o in output_vars])]
-
-        self.bins_z = np.linspace(self.data.isel(level =self.output_idxs).min(), self.data.isel(level =self.output_idxs).max(), 100) if bins_z is None else bins_z 
-        self.binned_data = xr.DataArray((np.digitize(self.data.isel(level=self.output_idxs), self.bins_z)-1)[:,:,:,0], dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
-        
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
         self.std = self.data.std('time').mean(('lat', 'lon')).compute() if std is None else std
         # Normalize
@@ -113,6 +76,10 @@ class DataGenerator(keras.utils.Sequence):
         self.n_samples = self.data.isel(time=slice(0, -lead_time)).shape[0]
         self.init_time = self.data.isel(time=slice(None, -lead_time)).time
         self.valid_time = self.data.isel(time=slice(lead_time, None)).time
+        
+        self.bins_z = np.linspace(ds.z.min(), ds.z.max(), 100) if bins_z is None else bins_z
+
+        self.binned_data = xr.DataArray(np.digitize(ds.z, self.bins_z)-1, dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
 
         del ds
         self.on_epoch_end()
@@ -137,20 +104,22 @@ class DataGenerator(keras.utils.Sequence):
         self.idxs = np.arange(self.n_samples)
         if self.shuffle == True:
             np.random.shuffle(self.idxs)
+            
+# then we need a dictionary for all the variables and levels we want to extract from the dataset
+dic = OrderedDict({'z': None, 't': None})
 
 bs=32
 lead_time=72
-output_vars = ['t_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False)
 
 dg_test = DataGenerator(
-    ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
+    ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -229,6 +198,7 @@ def build_resnet_cnn(filters, kernels, input_shape, l2 = None, dr = 0, skip = Tr
    
     return keras.models.Model(input, out)
 
+
 filt = [100]
 kern = [5]
 
@@ -239,12 +209,10 @@ for i in range(int(block_no)):
 filt.append(1)
 kern.append(5)
 
-cnn = build_resnet_cnn(filt, kern, (32, 64, 8), l2 = 1e-5)
+cnn = build_resnet_cnn(filt, kern, (32, 64, 2), l2 = 1e-5, dr = 0.1)
 print(cnn.summary())
 
 cnn.compile(keras.optimizers.Adam(5e-5), loss = 'sparse_categorical_crossentropy', metrics = ['sparse_categorical_accuracy'])
-
-print(cnn.summary())
 
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
@@ -260,28 +228,41 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
-
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid, callbacks=[early_stopping_callback, reduce_lr_callback])
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_multi_crossent_t_' + str(block_no) + '.h5')
-
-fc = cnn.predict(dg_test)
+cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_dr_' + str(block_no) + '.h5')
 
 
+no_of_forecasts = 32
 
-bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
+fc_all = []
 
-fc_arg_avg = fc.argmax(axis = -1)
+for i in range(no_of_forecasts):
+    print(i)
+    bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
 
-for i in range(99):
-    fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
+    fc = cnn.predict(dg_test)
 
-fc_conv_ds_avg = xr.Dataset({
-    'z': xr.DataArray(
-        fc_arg_avg,
-        dims=['time', 'lat', 'lon'],
-        coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+    fc_arg_avg = fc.argmax(axis = -1)
+
+    for i in range(99):
+        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
+
+    fc_conv_ds_avg = xr.Dataset({
+        'z': xr.DataArray(
+              fc_arg_avg,
+               dims=['time', 'lat', 'lon'],
+               coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
+    fc_all.append(fc_conv_ds_avg)
+    
+    
+fc_avg = 0
+rmse_list = []
 
-cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.t.sel(level=850)[72:])
-print(cnn_rmse_arg.compute())
+for i in range(len(fc_all)):
+    fc_avg += fc_all[i]
+    cnn_rmse_arg = compute_weighted_rmse(fc_avg/(i+1), ds_test.z[72:]).compute()
+    rmse_list.append(cnn_rmse_arg)
+
+print(rmse_list)
