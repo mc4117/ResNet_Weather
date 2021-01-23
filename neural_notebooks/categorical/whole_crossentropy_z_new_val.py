@@ -125,9 +125,9 @@ for long_var, params in var_dict.items():
 # because missing first values of solar radiation exclude these from the dataset
 ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
-ds_train = ds_whole.sel(time=slice('1979', '2016'))  
+ds_train = ds_whole.sel(time=slice('1979', '2016'))
+ds_valid = ds_train.sel(time=slice('2012', '2016'))
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
-ds_valid = ds_whole.sel(time=slice('2015', '2016'))
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -221,13 +221,13 @@ output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2013')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2010')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2015', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_valid2 = DataGenerator(
-    ds_train.sel(time=slice('2014', '2014')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
     ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
@@ -354,7 +354,7 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)
 
 
-cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, callbacks=[early_stopping_callback, reduce_lr_callback])
+cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, verbose =2, callbacks=[early_stopping_callback, reduce_lr_callback])
 
 
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_indiv_val' + str(args.block_no) + '_' + str(var_name)
@@ -389,7 +389,7 @@ for i in range(no_of_forecasts):
     
 output_avg = output_total/no_of_forecasts
     
-output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.nc')
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.nc', output_avg)
 
 fc_avg = 0
 rmse_list = []

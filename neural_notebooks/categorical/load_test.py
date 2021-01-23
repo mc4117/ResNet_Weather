@@ -52,63 +52,17 @@ DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
 if args.level_list is not None:
     unique_list = sorted(list(dict.fromkeys(args.level_list)))
-else:
-    unique_list = None
 
 # For the data generator all variables have to be merged into a single dataset.
-if var_name == 'specific_humidity':
-    if args.level_list is None:
-        unique_list = [150, 200, 600, 700, 850, 925, 1000]
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'specific_humidity': ('q', unique_list)}
-elif var_name == '2m_temp':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        '2m_temperature': ('t2m', None)}
-elif var_name == 'solar_rad':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'toa_incident_solar_radiation': ('tisr', None)}
-elif var_name == 'pot_vort':
-    if args.level_list is None:
-        unique_list = [150, 250, 300, 700, 850]
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'potential_vorticity': ('pv', unique_list)}
-elif var_name == 'const':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
+
+var_dict = {
+        'geopotential': ('z', [300, 400, 500, 600, 700, 850]),
+        'temperature': ('t', [300, 400, 500, 600, 700, 850]),
+        '2m_temperature': ('t2m', None),
+        'toa_incident_solar_radiation': ('tisr', None),
+        'potential_vorticity': ('pv', [150, 250, 300, 700, 850]),
+        'specific_humidity': ('q', [150, 200, 600, 700, 850, 925, 1000]),
         'constants': ['lat2d', 'orography', 'lsm']}
-elif var_name == 'orig':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850])} 
-elif var_name == 'temp':
-    if args.level_list is None:
-        unique_list = [300, 400, 500, 600, 700, 850]
-    else:
-        unique_list.append(850)
-        unique_list = sorted(list(dict.fromkeys(unique_list)))
-    print(unique_list)
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', unique_list)}
-elif var_name == 'geo':
-    if args.level_list is None:
-        unique_list = [300, 400, 500, 600, 700, 850]
-    else:
-        unique_list.append(500)
-        unique_list = sorted(list(dict.fromkeys(unique_list)))
-    print(unique_list)
-    var_dict = {
-        'geopotential': ('z', unique_list),
-        'temperature': ('t', [850])}    
 
 ds_list = []
 
@@ -125,8 +79,7 @@ for long_var, params in var_dict.items():
 # because missing first values of solar radiation exclude these from the dataset
 ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
-ds_train = ds_whole.sel(time=slice('1979', '2016'))
-ds_valid = ds_train.sel(time=slice('2012', '2016'))
+ds_train = ds_whole.sel(time=slice('1979', '2016'))  
 ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
@@ -175,7 +128,7 @@ class DataGenerator(keras.utils.Sequence):
         self.data['level_names'] = xr.DataArray(
             level_names, dims=['level'], coords={'level': self.data.level})
         if output_vars is None:
-            self.output_idxs = range(len(ds.data.level))
+            self.output_idxs = range(len(dg_valid.data.level))
         else:
             self.output_idxs = [i for i, l in enumerate(self.data.level_names.values) 
                                 if any([bool(re.match(o, l)) for o in output_vars])]
@@ -221,17 +174,16 @@ output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2010')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
-
-#dg_valid2 = DataGenerator(
-#    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
     ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
+print('loaded')
+stop
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
         super().__init__(**kwargs)
@@ -319,7 +271,7 @@ for i in range(int(args.block_no)):
 filt.append(1)
 kern.append(5)
 
-if unique_list is not None:
+if args.level_list is not None:
     if var_name == "temp":
         tot_var = 1 + len(unique_list)
     elif var_name == "geo":
@@ -342,7 +294,7 @@ print(cnn.summary())
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=3,
+                        patience=5,
                         verbose=1, 
                         mode='auto'
                     )
@@ -353,56 +305,47 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
-"""
-cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, callbacks=[early_stopping_callback, reduce_lr_callback])
-"""
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_indiv_val' + str(args.block_no) + '_' + str(var_name)
-cnn.load_weights(filename + '.h5')    
+cnn.fit(dg_train, epochs=100, validation_data=dg_valid, callbacks=[early_stopping_callback, reduce_lr_callback])
 
-del dg_train
-del ds_whole
+
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_do_' + str(args.block_no) + '_' + str(var_name) + str(unique_list)
+cnn.save_weights(filename + '.h5')    
 
 no_of_forecasts = 32
 
 fc_all = []
 
-output_total = 0
-
 for i in range(no_of_forecasts):
     print(i)
-    
-    fc = np.dot(cnn.predict(dg_valid), dg_valid.bins_z)
-    print(fc.shape)
-    fc_all.append(fc)
-    output_total += fc
-    
-output_avg = output_total/no_of_forecasts
-    
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.npy', output_avg)
+    bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
 
+    fc = cnn.predict(dg_test)
+
+    fc_arg_avg = fc.argmax(axis = -1)
+
+    for i in range(99):
+        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
+
+    fc_conv_ds_avg = xr.Dataset({
+        'z': xr.DataArray(
+              fc_arg_avg,
+               dims=['time', 'lat', 'lon'],
+               coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+                })})
+    fc_all.append(fc_conv_ds_avg)
+    
+    
 fc_avg = 0
 rmse_list = []
 
 for i in range(len(fc_all)):
     fc_avg += fc_all[i]
-    cnn_rmse_arg = compute_weighted_rmse(fc_avg/(i+1), ds_valid.z.sel(level = 500)[72:]).compute()
+    cnn_rmse_arg = compute_weighted_rmse(fc_avg/(i+1), ds_test.z.sel(level = 500)[72:]).compute()
     rmse_list.append(cnn_rmse_arg)
 
 print(rmse_list)
 
-
-fc_all = []
-
-output_total = 0
-
-for i in range(no_of_forecasts):
-    print(i)
-    
-    fc = np.dot(cnn.predict(dg_test), dg_test.bins_z)
-
-    output_total += fc.copy()
-    
-output_avg = output_total/no_of_forecasts
-    
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_test.npy', output_avg)
+f = open(filename + ".txt", "w")
+f.write(str(rmse_list))
+f.close()
