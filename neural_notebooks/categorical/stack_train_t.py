@@ -180,8 +180,6 @@ def build_stack_model(input_shape, stack_list):
     # concatenate merge output from each model
     input_list = [Input(shape=input_shape) for i in range(len(stack_list))]
     merge = concatenate(input_list)
-    #x = Dense(25, activation = 'relu')(merge)
-    #x = Dense(25, activation = 'relu')(x)
     x = Dense(36, activation = 'relu')(merge)
     x = Dense(36, activation = 'relu')(x)
     hidden = Dense(100)(x)
@@ -223,12 +221,12 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             verbose=1)  
 
 
-ensemble_model.fit(x = stack_test_list, y = y1, epochs = 200, validation_split = 0.2, shuffle = True, verbose =2,
+ensemble_model.fit(x = stack_test_list, y = y1, epochs = 300, validation_split = 0.2, shuffle = True, verbose =2,
                   callbacks = [early_stopping_callback, reduce_lr_callback
                     ])
 
 
-ensemble_model.load_weights('stacked_cat_9_train_t.h5')
+ensemble_model.save_weights('stacked_cat_9_train_t.h5')
 
 
 output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_t_preds_cat_test.npy'), axis = -1)

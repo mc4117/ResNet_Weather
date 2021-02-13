@@ -232,7 +232,7 @@ ensemble_model.fit(x = stack_test_list, y = y1, epochs = 200, validation_split =
                     ])
 
 
-ensemble_model.load_weights('stacked_cat_9_train_6.h5')
+ensemble_model.save_weights('stacked_cat_9_train_6.h5')
 
 
 output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
