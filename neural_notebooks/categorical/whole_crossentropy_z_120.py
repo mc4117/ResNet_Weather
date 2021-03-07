@@ -98,7 +98,7 @@ elif var_name == 'orig':
         'temperature': ('t', [850])} 
 elif var_name == 'temp':
     if args.level_list is None:
-        unique_list = [500, 600, 700, 850, 925, 1000]
+        unique_list = [300, 400, 500, 600, 700, 850]
     else:
         unique_list.append(850)
         unique_list = sorted(list(dict.fromkeys(unique_list)))
@@ -108,7 +108,7 @@ elif var_name == 'temp':
         'temperature': ('t', unique_list)}
 elif var_name == 'geo':
     if args.level_list is None:
-        unique_list = [500, 600, 700, 850, 925, 1000]
+        unique_list = [300, 400, 500, 600, 700, 850]
     else:
         unique_list.append(500)
         unique_list = sorted(list(dict.fromkeys(unique_list)))
@@ -138,7 +138,7 @@ ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
-                 mean=None, std=None, output_vars= None, bins_t = None):
+                 mean=None, std=None, output_vars= None, bins_z = None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -187,8 +187,8 @@ class DataGenerator(keras.utils.Sequence):
             self.output_idxs = [i for i, l in enumerate(self.data.level_names.values) 
                                 if any([bool(re.match(o, l)) for o in output_vars])]
 
-        self.bins_t = np.linspace(self.data.isel(level =self.output_idxs).min(), self.data.isel(level =self.output_idxs).max(), 100) if bins_t is None else bins_t 
-        self.binned_data = xr.DataArray((np.digitize(self.data.isel(level=self.output_idxs), self.bins_t)-1)[:,:,:,0], dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
+        self.bins_z = np.linspace(self.data.isel(level =self.output_idxs).min(), self.data.isel(level =self.output_idxs).max(), 100) if bins_z is None else bins_z 
+        self.binned_data = xr.DataArray((np.digitize(self.data.isel(level=self.output_idxs), self.bins_z)-1)[:,:,:,0], dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
         
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
         self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
@@ -223,21 +223,21 @@ class DataGenerator(keras.utils.Sequence):
             np.random.shuffle(self.idxs)
 
 bs=32
-lead_time=72
-output_vars = ['t_850']
+lead_time=120
+output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2010')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_valid2 = DataGenerator(
-    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
-    ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -364,5 +364,5 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, verbose =2, callbacks=[early_stopping_callback, reduce_lr_callback])
 
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_t_indiv_val' + str(args.block_no) + '_' + str(var_name)
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_indiv_val_120_' + str(args.block_no) + '_' + str(var_name)
 cnn.save_weights(filename + '.h5')    

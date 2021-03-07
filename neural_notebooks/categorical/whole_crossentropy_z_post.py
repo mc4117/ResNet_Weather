@@ -80,6 +80,13 @@ elif var_name == 'pot_vort':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'potential_vorticity': ('pv', unique_list)}
+elif var_name == 'wind':
+    if args.level_list is None:
+        unique_list = [50, 100, 300, 850, 925, 1000]
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'u_component_of_wind': ('u', unique_list)}
 elif var_name == 'const':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -365,7 +372,7 @@ del ds_whole
 
 no_of_forecasts = 32
 
-fc_all = []
+#fc_all = []
 
 output_total = 0
 
@@ -374,25 +381,17 @@ for i in range(no_of_forecasts):
     
     fc = np.dot(cnn.predict(dg_valid), dg_valid.bins_z)
     print(fc.shape)
-    fc_all.append(fc)
+    #fc_all.append(fc)
     output_total += fc
+    print(compute_weighted_rmse(output_total/(i+1), ds_valid.z.sel(level = 500)[72:]).compute())
     
 output_avg = output_total/no_of_forecasts
-    
+
 np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.npy', output_avg)
 
-fc_avg = 0
-rmse_list = []
-
-for i in range(len(fc_all)):
-    fc_avg += fc_all[i]
-    cnn_rmse_arg = compute_weighted_rmse(fc_avg/(i+1), ds_valid.z.sel(level = 500)[72:]).compute()
-    rmse_list.append(cnn_rmse_arg)
-
-print(rmse_list)
-
-
-fc_all = []
+del output_avg
+del output_total
+del fc
 
 output_total = 0
 

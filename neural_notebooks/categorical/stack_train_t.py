@@ -1,4 +1,8 @@
-## load data 
+## load data
+import argparse
+# defined command line options
+
+CLI=argparse.ArgumentParser()
 
 import numpy as np
 import xarray as xr
@@ -12,6 +16,17 @@ from src.score import *
 import re
 from collections import OrderedDict
 
+CLI.add_argument(
+  "--block_no",
+  type = int,
+  default = 2,
+)
+
+args = CLI.parse_args()
+
+print(args.block_no)
+
+block_no = args.block_no
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
@@ -141,16 +156,14 @@ dg_test = DataGenerator(
     ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
 
 
-block_no = 9
-
 bin_values = dg_valid.bins_t
 
-output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_t_preds_cat_val.npy'), axis = -1)
-output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_t_preds_cat_val.npy'),axis = -1)
-output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_t_preds_cat_val.npy'), axis = -1)
-output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_t_preds_cat_val.npy'), axis = -1)
-output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_t_preds_cat_val.npy'), axis = -1)
-output_avg_2m_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_2m_temp_no_l_t_preds_cat_val.npy'), axis = -1)
+output_avg_wind =  np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_t_val.npy'), axis = -1)
+output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[500, 600, 700, 850, 925, 1000]_preds_cat_t_val.npy'), axis = -1)
+output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[500, 600, 700, 850, 925, 1000]_preds_cat_t_val.npy'),axis = -1)
+output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_t_val.npy'), axis = -1)
+output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_t_val.npy'), axis = -1)
+output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_t_val.npy'), axis = -1)
 
 X1, y1 = dg_valid[0]
 
@@ -163,16 +176,16 @@ output_avg_temp_mean = (output_avg_temp-float(dg_valid.mean.sel(level = 850)))/f
 output_avg_pv_mean = (output_avg_pv-float(dg_valid.mean.sel(level = 850)))/float(dg_valid.std.sel(level = 850))
 output_avg_sh_mean = (output_avg_sh-float(dg_valid.mean.sel(level = 850)))/float(dg_valid.std.sel(level = 850))
 output_avg_const_mean = (output_avg_const-float(dg_valid.mean.sel(level = 850)))/float(dg_valid.std.sel(level = 850))
-output_avg_2m_temp_mean = (output_avg_2m_temp-float(dg_valid.mean.sel(level = 850)))/float(dg_valid.std.sel(level = 850))
+output_avg_wind_mean = (output_avg_wind-float(dg_valid.mean.sel(level = 850)))/float(dg_valid.std.sel(level = 850))
 
 del output_avg_geo
 del output_avg_temp
 del output_avg_pv
 del output_avg_sh
 del output_avg_const
-del output_avg_2m_temp
+del output_avg_wind
 
-stack_test_list = [output_avg_geo_mean, output_avg_temp_mean, output_avg_pv_mean, output_avg_sh_mean, output_avg_const_mean, output_avg_2m_temp_mean]
+stack_test_list = [output_avg_wind_mean, output_avg_geo_mean, output_avg_temp_mean, output_avg_pv_mean, output_avg_sh_mean, output_avg_const_mean]
 
 from tensorflow.keras.layers import concatenate
 
@@ -198,7 +211,7 @@ del output_avg_temp_mean
 del output_avg_pv_mean
 del output_avg_sh_mean
 del output_avg_const_mean
-del output_avg_2m_temp_mean
+del output_avg_wind_mean
 
 print('got here')
 
@@ -219,41 +232,42 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             patience=3,
             factor=0.2,
             verbose=1)  
-
+"""
 
 ensemble_model.fit(x = stack_test_list, y = y1, epochs = 300, validation_split = 0.2, shuffle = True, verbose =2,
                   callbacks = [early_stopping_callback, reduce_lr_callback
                     ])
+"""
 
+ensemble_model.load_weights('stacked_cat_' + str(block_no) + '_train_t.h5')
 
-ensemble_model.save_weights('stacked_cat_9_train_t.h5')
-
-
-output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_t_preds_cat_test.npy'), axis = -1)
-output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_t_preds_cat_test.npy'), axis = -1)
-output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_t_preds_cat_test.npy'), axis = -1)
-output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_t_preds_cat_test.npy'), axis = -1)
-output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_t_preds_cat_test.npy'), axis = -1)
-output_test_2m_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_2m_temp_no_l_t_preds_cat_test.npy'), axis = -1)
+output_test_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_t_test.npy'), axis = -1)
+output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[500, 600, 700, 850, 925, 1000]_preds_cat_t_test.npy'), axis = -1)
+output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[500, 600, 700, 850, 925, 1000]_preds_cat_t_test.npy'), axis = -1)
+output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_t_test.npy'), axis = -1)
+output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_t_test.npy'), axis = -1)
+output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_t_test.npy'), axis = -1)
 
 output_test_geo_mean = (output_test_geo-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
 output_test_temp_mean = (output_test_temp-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
 output_test_pv_mean = (output_test_pv-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
 output_test_sh_mean = (output_test_sh-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
 output_test_const_mean = (output_test_const-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
-output_test_2m_temp_mean = (output_test_2m_temp-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
+output_test_wind_mean = (output_test_wind-float(dg_test.mean.sel(level = 850)))/float(dg_test.std.sel(level = 850))
 
 
-stack_test_test = [output_test_geo_mean, output_test_temp_mean, output_test_pv_mean, output_test_sh_mean, output_test_const_mean, output_test_2m_temp_mean]
+stack_test_test = [output_test_wind_mean, output_test_geo_mean, output_test_temp_mean, output_test_pv_mean, output_test_sh_mean, output_test_const_mean]
 
 del output_test_geo
 del output_test_temp
 del output_test_pv
 del output_test_sh
 del output_test_const
-del output_test_2m_temp
+del output_test_wind
 
-fc = np.dot(ensemble_model.predict(stack_test_test), dg_test.bins_t)
+stack_out = ensemble_model.predict(stack_test_test)
+
+fc = np.dot(stack_out, dg_test.bins_t)
 
 fc_conv_ds_avg = xr.Dataset({
         't': xr.DataArray(
@@ -264,3 +278,5 @@ fc_conv_ds_avg = xr.Dataset({
     
 cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.t.sel(level = 850)[72:]).compute()
 print(cnn_rmse_arg)
+
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/3_day_' + str(args.block_no) + '_predictions.npy', stack_out)

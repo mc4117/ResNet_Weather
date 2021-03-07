@@ -85,6 +85,13 @@ elif var_name == 'const':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'constants': ['lat2d', 'orography', 'lsm']}
+elif var_name == 'wind':
+    if args.level_list is None:
+        unique_list = [50, 100, 300, 850, 925, 1000]
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'u_component_of_wind': ('u', unique_list)}
 elif var_name == 'orig':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -359,74 +366,3 @@ cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, verbose =2, callbacks=[
 
 filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_indiv_val' + str(args.block_no) + '_' + str(var_name)
 cnn.save_weights(filename + '.h5')    
-
-no_of_forecasts = 32
-
-fc_all = []
-
-output_total = 0
-
-for i in range(no_of_forecasts):
-    print(i)
-    
-    bins_z_avg = [(dg_valid.bins_z[i] + dg_valid.bins_z[i+1])/2 for i in range(len(dg_valid.bins_z)-1)]
-
-    fc = cnn.predict(dg_valid)
-
-    fc_arg_avg = fc.argmax(axis = -1)
-
-    for i in range(99):
-        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
-
-    fc_conv_ds_avg = xr.Dataset({
-        'z': xr.DataArray(
-              fc_arg_avg,
-               dims=['time', 'lat', 'lon'],
-               coords={'time':dg_valid.data.time[72:], 'lat': dg_valid.data.lat, 'lon': dg_valid.data.lon,
-                })})
-    fc_all.append(fc_conv_ds_avg)
-    output_total += fc_conv_ds_avg.copy()
-    
-output_avg = output_total/no_of_forecasts
-    
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.nc', output_avg)
-
-fc_avg = 0
-rmse_list = []
-
-for i in range(len(fc_all)):
-    fc_avg += fc_all[i]
-    cnn_rmse_arg = compute_weighted_rmse(fc_avg/(i+1), ds_valid.z.sel(level = 500)[72:]).compute()
-    rmse_list.append(cnn_rmse_arg)
-
-print(rmse_list)
-
-
-fc_all = []
-
-output_total = 0
-
-for i in range(no_of_forecasts):
-    print(i)
-    
-    bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
-
-    fc = cnn.predict(dg_test)
-
-    fc_arg_avg = fc.argmax(axis = -1)
-
-    for i in range(99):
-        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
-
-    fc_conv_ds_avg = xr.Dataset({
-        'z': xr.DataArray(
-              fc_arg_avg,
-               dims=['time', 'lat', 'lon'],
-               coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
-                })})
-    fc_all.append(fc_conv_ds_avg)
-    output_total += fc_conv_ds_avg.copy()
-    
-output_avg = output_total/no_of_forecasts
-    
-output_avg.to_netcdf('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_test.nc')

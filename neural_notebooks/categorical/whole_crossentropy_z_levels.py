@@ -74,6 +74,11 @@ elif var_name == 'pot_vort':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'potential_vorticity': ('pv', unique_list)}
+elif var_name == 'wind':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'u_component_of_wind': ('u', unique_list)}
 elif var_name == 'const':
     var_dict = {
         'geopotential': ('z', [500]),

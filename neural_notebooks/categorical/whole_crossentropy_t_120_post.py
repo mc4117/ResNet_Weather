@@ -91,7 +91,7 @@ elif var_name == 'wind':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'u_component_of_wind': ('u', unique_list)}
+        'u_component_of_wind': ('u', unique_list)}    
 elif var_name == 'orig':
     var_dict = {
         'geopotential': ('z', [500]),
@@ -223,7 +223,7 @@ class DataGenerator(keras.utils.Sequence):
             np.random.shuffle(self.idxs)
 
 bs=32
-lead_time=72
+lead_time=120
 output_vars = ['t_850']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
@@ -233,8 +233,8 @@ dg_train = DataGenerator(
 dg_valid = DataGenerator(
     ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
 
-dg_valid2 = DataGenerator(
-    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+#dg_valid2 = DataGenerator(
+#    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
     ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
@@ -349,20 +349,59 @@ print(cnn.summary())
 early_stopping_callback = tf.keras.callbacks.EarlyStopping(
                         monitor='val_loss',
                         min_delta=0,
-                        patience=5,
+                        patience=3,
                         verbose=1, 
                         mode='auto'
                     )
 
 reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             monitor = 'val_loss',
-            patience=3,
+            patience=2,
             factor=0.2,
             verbose=1)
 
+"""
+cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, callbacks=[early_stopping_callback, reduce_lr_callback])
+"""
 
-cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, verbose =2, callbacks=[early_stopping_callback, reduce_lr_callback])
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_t_indiv_val_120_' + str(args.block_no) + '_' + str(var_name)
+cnn.load_weights(filename + '.h5')    
 
+del dg_train
+del ds_whole
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_t_indiv_val' + str(args.block_no) + '_' + str(var_name)
-cnn.save_weights(filename + '.h5')    
+no_of_forecasts = 32
+
+#fc_all = []
+
+output_total = 0
+
+for i in range(no_of_forecasts):
+    print(i)
+    
+    fc = np.dot(cnn.predict(dg_valid), dg_valid.bins_t)
+    print(fc.shape)
+    #fc_all.append(fc)
+    output_total += fc
+    print(compute_weighted_rmse(output_total/(i+1), ds_valid.t.sel(level = 850)[72:]).compute())
+    
+output_avg = output_total/no_of_forecasts
+
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_t_val.npy', output_avg)
+
+del output_avg
+del output_total
+del fc
+
+output_total = 0
+
+for i in range(no_of_forecasts):
+    print(i)
+    
+    fc = np.dot(cnn.predict(dg_test), dg_test.bins_t)
+
+    output_total += fc.copy()
+    
+output_avg = output_total/no_of_forecasts
+    
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_t_test.npy', output_avg)

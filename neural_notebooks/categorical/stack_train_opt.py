@@ -1,9 +1,4 @@
 ## load data 
-import argparse
-# defined command line options
-
-CLI=argparse.ArgumentParser()
-
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -15,18 +10,6 @@ from tensorflow.keras.utils import to_categorical
 from src.score import *
 import re
 from collections import OrderedDict
-
-CLI.add_argument(
-  "--block_no",
-  type = int,
-  default = 2,
-)
-
-args = CLI.parse_args()
-
-print(args.block_no)
-
-block_no = args.block_no
 
 DATADIR = '/rds/general/user/mc4117/home/WeatherBench/data/'
 
@@ -163,13 +146,13 @@ dg_test = DataGenerator(
 
 bin_values = dg_valid.bins_z
 
-output_avg_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
-output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'), axis = -1)
-output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'),axis = -1)
-output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_val.npy'), axis = -1)
-output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
-output_avg_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_solar_rad_no_l_preds_cat_val.npy'), axis = -1)
-output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_val.npy'), axis = -1)
+output_avg_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
+output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/27_geo_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'), axis = -1)
+output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_temp_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'),axis = -1)
+output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_pot_vort_[150, 250, 300, 700, 850]_preds_cat_val.npy'), axis = -1)
+output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
+output_avg_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_solar_rad_no_l_preds_cat_val.npy'), axis = -1)
+output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_const_no_l_preds_cat_val.npy'), axis = -1)
 
 X1, y1 = dg_valid[0]
 
@@ -248,15 +231,15 @@ ensemble_model.fit(x = stack_test_list, y = y1, epochs = 200, validation_split =
                     ])
 
 
-ensemble_model.save_weights('stacked_cat_' + str(block_no) + '_train_7.h5')
+ensemble_model.save_weights('stacked_cat_opt_train_7.h5')
 
-output_test_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
-output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
-output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_test.npy'), axis = -1)
-output_test_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_solar_rad_no_l_preds_cat_test.npy'), axis = -1)
+output_test_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
+output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/27_geo_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_temp_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_pot_vort_[150, 250, 300, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
+output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/29_const_no_l_preds_cat_test.npy'), axis = -1)
+output_test_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/25_solar_rad_no_l_preds_cat_test.npy'), axis = -1)
 
 output_test_wind_mean = (output_test_wind-float(dg_test.mean.sel(level = 500)))/float(dg_test.std.sel(level = 500))
 output_test_geo_mean = (output_test_geo-float(dg_test.mean.sel(level = 500)))/float(dg_test.std.sel(level = 500))
