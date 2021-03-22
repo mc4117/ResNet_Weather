@@ -37,8 +37,8 @@ datasets = [z, t]
 ds = xr.merge(datasets)
 
 # split train and test data
-ds_train = ds.sel(time=slice('1979', '2016'))  
-ds_test = ds.sel(time=slice('2017', '2018'))
+ds_train = ds.sel(time=slice('1979', '2015'))  
+ds_test = ds.sel(time=slice('2016', '2016'))
 
 # create data generator
 class DataGenerator(keras.utils.Sequence):
@@ -109,9 +109,9 @@ lead_time=72
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), dic, lead_time, batch_size=bs, load=True)
+    ds_train.sel(time=slice('1979', '2014')), dic, lead_time, batch_size=bs, load=True)
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
+    ds_train.sel(time=slice('2015', '2015')), dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)
 
 # Now also a generator for testing. Impartant: Shuffle must be False!
 dg_test = DataGenerator(ds_test, dic, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, shuffle=False)

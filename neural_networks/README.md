@@ -1,17 +1,11 @@
-The python files in this folder are used to train 
+The python files in this folder are used to train individual ResNets to produce a probabilistic weather forecast. This is done by transforming the data to categorical and then using a SoftMax layer. Below we give a brief description of each file and the section it corresponds to in the accompanying paper.
 
-    whole_res_nn_72.py - Section 2.1
-    whole_res_nn_do.py - Section 2.1
-    whole_mm_indiv_data.py - Section 3.2
-    whole_mm_indiv_data_adv.py - Section 3.3    
-    whole_mm_more_data_bl.py - Section 4.1
-    whole_mm_indiv_new_val.py - Section 4.2
-    multivariable_9_resnet_stacked_val_bn.ipynb - Section 4.2    
-    stack_29bl.py - Section 4.2
+    orig_no_dr_z.py/orig_no_dr_t.py - training ResNet using only Z500 and T850 - Section 2.3.1
+    continuous_72.py - training on continuous data (using only Z500 and T850) for comparison - Section 2.3.1
+    orig_dr_z.py/orig_dr_t.py - training ResNet using only Z500 and T850 with dropout - Section 2.3.2
+    level_analysis_t.py/level_analysis_z.py - determining optimum variables and levels - Sections 2.2.2 and 2.2.3
+    indiv_member_train*.py - used to generate inputs for stacked neural network and for determining optimum number of residual blocks - Sections 2.3.4 and 3   
+    stack_train* - used to train stacked neural networks and to make final accuracy estimates for our neural network approach - Section 3
 
-All results python files are for 3 day predictions apart from those in "lead_time_120" folder. All files can easily be changed to 5 day prediction by changing the lead time to 120. 
-
-The visualisation_and_postprocessing folder contains all the ipynb files used for post-processing output produced by python files. 
-
-The results of this are collated in results_summary.ipynb with a note as to which ipynb file post_processed the output
+The main results of are collated in results_summary.ipynb and `outputs_example_z.ipynb` and `outputs_example_t.ipynb` show examples of outputs produced by the neural network, in this case for Storm Ophelia in October 2017 (see Section 3 of accompanying paper).
 

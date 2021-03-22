@@ -113,8 +113,8 @@ for long_var, params in var_dict.items():
 # Because the first values of solar radiation are missing we exclude the first 7hrs from the dataset
 ds_whole = xr.merge(ds_list).isel(time = slice(7, None))
 
-ds_train = ds_whole.sel(time=slice('1979', '2016'))  
-ds_test = ds_whole.sel(time=slice('2017', '2018'))
+ds_train = ds_whole.sel(time=slice('1979', '2015'))  
+ds_test = ds_whole.sel(time=slice('2016', '2016'))
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
@@ -212,10 +212,10 @@ output_vars = ['t_850']
 
 # Create a training and validation data generator. Use the train mean, std and bins for validation as well.
 dg_train = DataGenerator(
-    ds_train.sel(time=slice('1979', '2015')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
+    ds_train.sel(time=slice('1979', '2014')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2016', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2015', '2015')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
     ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
