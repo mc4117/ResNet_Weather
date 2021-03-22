@@ -224,18 +224,18 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)
 
+"""
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid, callbacks=[early_stopping_callback, reduce_lr_callback])
+"""
 
-
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_t_' + str(block_no) + '.h5')
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_t_' + str(block_no) + '.h5')
 
 fc = cnn.predict(dg_test)
 
-fc_arg = fc.argmax(axis = -1)
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/categorical_pred_t_' + str(block_no) + '.npy', fc)
 
-for i in range(100):
-    fc_arg[fc_arg == i] = dg_test.bins_t[i]
-    
+fc_arg= np.dot(fc, dg_test.bins_t)
+
 
 fc_conv_ds = xr.Dataset({
     't': xr.DataArray(
@@ -244,9 +244,13 @@ fc_conv_ds = xr.Dataset({
         coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
 
+
 cnn_rmse = compute_weighted_rmse(fc_conv_ds, ds_test.t[72:])
 print(cnn_rmse.compute())
 
+
+
+"""
 bins_t_avg = [(dg_test.bins_t[i] + dg_test.bins_t[i+1])/2 for i in range(len(dg_test.bins_t)-1)]
 
 fc_arg_avg = fc.argmax(axis = -1)
@@ -263,4 +267,4 @@ fc_conv_ds_avg = xr.Dataset({
 
 cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.t[72:])
 print(cnn_rmse_arg.compute())
-
+"""

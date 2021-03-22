@@ -15,7 +15,7 @@ print("Script name ", sys.argv[0])
 
 block_no = sys.argv[1]
 
-
+print(block_no)
 #device_name = tf.test.gpu_device_name()
 #if device_name != '/device:GPU:0':
 #    raise SystemError('GPU device not found')
@@ -227,11 +227,11 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             patience=2,
             factor=0.2,
             verbose=1)
-
+"""
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid, callbacks=[early_stopping_callback, reduce_lr_callback])
+"""
 
-cnn.save_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_dr_' + str(block_no) + '.h5')
-
+cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_cat_crossent_non_ohe_dr_' + str(block_no) + '.h5')
 
 no_of_forecasts = 32
 
@@ -239,14 +239,10 @@ fc_all = []
 
 for i in range(no_of_forecasts):
     print(i)
-    bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
 
     fc = cnn.predict(dg_test)
 
-    fc_arg_avg = fc.argmax(axis = -1)
-
-    for i in range(99):
-        fc_arg_avg[fc_arg_avg == i] = bins_z_avg[i]
+    fc_arg_avg = np.dot(fc, dg_test.bins_z)
 
     fc_conv_ds_avg = xr.Dataset({
         'z': xr.DataArray(
@@ -255,8 +251,8 @@ for i in range(no_of_forecasts):
                coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
     fc_all.append(fc_conv_ds_avg)
-    
-    
+
+
 fc_avg = 0
 rmse_list = []
 

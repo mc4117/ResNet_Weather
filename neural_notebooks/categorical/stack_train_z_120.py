@@ -140,7 +140,7 @@ class DataGenerator(keras.utils.Sequence):
             np.random.shuffle(self.idxs)
 
 bs=32
-lead_time=72
+lead_time=120
 output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
@@ -163,13 +163,13 @@ dg_test = DataGenerator(
 
 bin_values = dg_valid.bins_z
 
-output_avg_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
-output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'), axis = -1)
-output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'),axis = -1)
-output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_val.npy'), axis = -1)
-output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
-output_avg_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_solar_rad_no_l_preds_cat_val.npy'), axis = -1)
-output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_val.npy'), axis = -1)
+output_avg_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
+output_avg_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'), axis = -1)
+output_avg_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_val.npy'),axis = -1)
+output_avg_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_val.npy'), axis = -1)
+output_avg_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_val.npy'), axis = -1)
+output_avg_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_solar_rad_no_l_preds_cat_val.npy'), axis = -1)
+output_avg_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_const_no_l_preds_cat_val.npy'), axis = -1)
 
 X1, y1 = dg_valid[0]
 
@@ -243,21 +243,20 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
             factor=0.2,
             verbose=1)  
 
-"""
+
 ensemble_model.fit(x = stack_test_list, y = y1, epochs = 200, validation_split = 0.2, shuffle = True, verbose =2,
                   callbacks = [early_stopping_callback, reduce_lr_callback
                     ])
-"""
 
-ensemble_model.load_weights('stacked_cat_' + str(block_no) + '_train_7.h5')
+ensemble_model.save_weights('stacked_cat_120_' + str(block_no) + '_train_7.h5')
 
-output_test_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
-output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_test.npy'), axis = -1)
-output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
-output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_const_no_l_preds_cat_test.npy'), axis = -1)
-output_test_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/' + str(block_no) + '_solar_rad_no_l_preds_cat_test.npy'), axis = -1)
+output_test_wind = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_wind_[50, 100, 300, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
+output_test_geo = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_geo_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_temp = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_temp_[300, 400, 500, 600, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_pv = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_pot_vort_[150, 250, 300, 700, 850]_preds_cat_test.npy'), axis = -1)
+output_test_sh = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_specific_humidity_[150, 200, 600, 700, 850, 925, 1000]_preds_cat_test.npy'), axis = -1)
+output_test_const = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_const_no_l_preds_cat_test.npy'), axis = -1)
+output_test_sr = np.expand_dims(np.load('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(block_no) + '_solar_rad_no_l_preds_cat_test.npy'), axis = -1)
 
 output_test_wind_mean = (output_test_wind-float(dg_test.mean.sel(level = 500)))/float(dg_test.std.sel(level = 500))
 output_test_geo_mean = (output_test_geo-float(dg_test.mean.sel(level = 500)))/float(dg_test.std.sel(level = 500))
@@ -285,10 +284,10 @@ fc_conv_ds_avg = xr.Dataset({
         'z': xr.DataArray(
               fc,
                dims=['time', 'lat', 'lon'],
-               coords={'time':dg_test.data.time[72:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
+               coords={'time':dg_test.data.time[120:], 'lat': dg_test.data.lat, 'lon': dg_test.data.lon,
                 })})
     
-cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.z.sel(level = 500)[72:]).compute()
+cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.z.sel(level = 500)[120:]).compute()
 print(cnn_rmse_arg)
 
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/3_day_' + str(args.block_no) + '_z_predictions.npy', stack_out)
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/5_day_' + str(args.block_no) + '_z_predictions.npy', stack_out)

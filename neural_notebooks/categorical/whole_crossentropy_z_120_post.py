@@ -80,25 +80,25 @@ elif var_name == 'pot_vort':
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
         'potential_vorticity': ('pv', unique_list)}
-elif var_name == 'const':
-    var_dict = {
-        'geopotential': ('z', [500]),
-        'temperature': ('t', [850]),
-        'constants': ['lat2d', 'orography', 'lsm']}
 elif var_name == 'wind':
     if args.level_list is None:
         unique_list = [50, 100, 300, 850, 925, 1000]
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850]),
-        'u_component_of_wind': ('u', unique_list)}    
+        'u_component_of_wind': ('u', unique_list)}
+elif var_name == 'const':
+    var_dict = {
+        'geopotential': ('z', [500]),
+        'temperature': ('t', [850]),
+        'constants': ['lat2d', 'orography', 'lsm']}
 elif var_name == 'orig':
     var_dict = {
         'geopotential': ('z', [500]),
         'temperature': ('t', [850])} 
 elif var_name == 'temp':
     if args.level_list is None:
-        unique_list = [500, 600, 700, 850, 925, 1000]
+        unique_list = [300, 400, 500, 600, 700, 850]
     else:
         unique_list.append(850)
         unique_list = sorted(list(dict.fromkeys(unique_list)))
@@ -108,7 +108,7 @@ elif var_name == 'temp':
         'temperature': ('t', unique_list)}
 elif var_name == 'geo':
     if args.level_list is None:
-        unique_list = [500, 600, 700, 850, 925, 1000]
+        unique_list = [300, 400, 500, 600, 700, 850]
     else:
         unique_list.append(500)
         unique_list = sorted(list(dict.fromkeys(unique_list)))
@@ -138,7 +138,7 @@ ds_test = ds_whole.sel(time=slice('2017', '2018'))
 
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, ds, var_dict, lead_time, batch_size=32, shuffle=True, load=True, 
-                 mean=None, std=None, output_vars= None, bins_t = None):
+                 mean=None, std=None, output_vars= None, bins_z = None):
         """
         Data generator for WeatherBench data.
         Template from https://stanford.edu/~shervine/blog/keras-how-to-generate-data-on-the-fly
@@ -187,8 +187,8 @@ class DataGenerator(keras.utils.Sequence):
             self.output_idxs = [i for i, l in enumerate(self.data.level_names.values) 
                                 if any([bool(re.match(o, l)) for o in output_vars])]
 
-        self.bins_t = np.linspace(self.data.isel(level =self.output_idxs).min(), self.data.isel(level =self.output_idxs).max(), 100) if bins_t is None else bins_t 
-        self.binned_data = xr.DataArray((np.digitize(self.data.isel(level=self.output_idxs), self.bins_t)-1)[:,:,:,0], dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
+        self.bins_z = np.linspace(self.data.isel(level =self.output_idxs).min(), self.data.isel(level =self.output_idxs).max(), 100) if bins_z is None else bins_z 
+        self.binned_data = xr.DataArray((np.digitize(self.data.isel(level=self.output_idxs), self.bins_z)-1)[:,:,:,0], dims=['time', 'lat', 'lon'], coords={'time':self.data.time.values, 'lat': self.data.lat.values, 'lon': self.data.lon.values})
         
         self.mean = self.data.mean(('time', 'lat', 'lon')).compute() if mean is None else mean
         self.std = self.data.std(('time', 'lat', 'lon')).compute() if std is None else std
@@ -224,20 +224,20 @@ class DataGenerator(keras.utils.Sequence):
 
 bs=32
 lead_time=120
-output_vars = ['t_850']
+output_vars = ['z_500']
 
 # Create a training and validation data generator. Use the train mean and std for validation as well.
 dg_train = DataGenerator(
     ds_train.sel(time=slice('1979', '2010')), var_dict, lead_time, batch_size=bs, load=True, output_vars = output_vars)
 
 dg_valid = DataGenerator(
-    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_train.sel(time=slice('2012', '2016')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 #dg_valid2 = DataGenerator(
-#    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+#    ds_train.sel(time=slice('2011', '2011')), var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 dg_test = DataGenerator(
-    ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_t = dg_train.bins_t, shuffle=False, output_vars = output_vars)
+    ds_test, var_dict, lead_time, batch_size=bs, mean=dg_train.mean, std=dg_train.std, bins_z = dg_train.bins_z, shuffle=False, output_vars = output_vars)
 
 class PeriodicPadding2D(tf.keras.layers.Layer):
     def __init__(self, pad_width, **kwargs):
@@ -364,7 +364,7 @@ reduce_lr_callback = tf.keras.callbacks.ReduceLROnPlateau(
 cnn.fit(dg_train, epochs=100, validation_data=dg_valid2, callbacks=[early_stopping_callback, reduce_lr_callback])
 """
 
-filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_t_indiv_val_120_' + str(args.block_no) + '_' + str(var_name)
+filename = '/rds/general/user/mc4117/ephemeral/saved_models/whole_cat_indiv_val_120_' + str(args.block_no) + '_' + str(var_name)
 cnn.load_weights(filename + '.h5')    
 
 del dg_train
@@ -379,15 +379,15 @@ output_total = 0
 for i in range(no_of_forecasts):
     print(i)
     
-    fc = np.dot(cnn.predict(dg_valid), dg_valid.bins_t)
+    fc = np.dot(cnn.predict(dg_valid), dg_valid.bins_z)
     print(fc.shape)
     #fc_all.append(fc)
     output_total += fc
-    print(compute_weighted_rmse(output_total/(i+1), ds_valid.t.sel(level = 850)[120:]).compute())
+    print(compute_weighted_rmse(output_total/(i+1), ds_valid.z.sel(level = 500)[120:]).compute())
     
 output_avg = output_total/no_of_forecasts
 
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_t_val.npy', output_avg)
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_val.npy', output_avg)
 
 del output_avg
 del output_total
@@ -398,10 +398,14 @@ output_total = 0
 for i in range(no_of_forecasts):
     print(i)
     
-    fc = np.dot(cnn.predict(dg_test), dg_test.bins_t)
+    fc = np.dot(cnn.predict(dg_test), dg_test.bins_z)
 
     output_total += fc.copy()
     
 output_avg = output_total/no_of_forecasts
     
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_t_test.npy', output_avg)
+print('test')
+
+print(compute_weighted_rmse(output_avg, ds_test.z.sel(level = 500)[120:]).compute())
+
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/120_' + str(args.block_no) + '_' + str(var_name) + '_' + str(unique_list) + '_preds_cat_test.npy', output_avg)

@@ -15,7 +15,7 @@ print("Script name ", sys.argv[0])
 
 block_no = sys.argv[1]
 
-
+print(block_no)
 #device_name = tf.test.gpu_device_name()
 #if device_name != '/device:GPU:0':
 #    raise SystemError('GPU device not found')
@@ -237,12 +237,15 @@ cnn.load_weights('/rds/general/user/mc4117/home/WeatherBench/saved_models/whole_
 
 fc = cnn.predict(dg_test)
 
-np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred/categorical_pred.npy', fc)
+np.save('/rds/general/user/mc4117/home/WeatherBench/saved_pred_data/categorical_pred' + str(block_no) + '.npy', fc)
 
-fc_arg = fc.argmax(axis = -1)
+fc_arg= np.dot(fc, dg_test.bins_z)
 
-for i in range(100):
-    fc_arg[fc_arg == i] = dg_test.bins_z[i]
+
+#fc_arg = fc.argmax(axis = -1)
+
+#for i in range(100):
+#    fc_arg[fc_arg == i] = dg_test.bins_z[i]
     
 
 fc_conv_ds = xr.Dataset({
@@ -256,6 +259,7 @@ cnn_rmse = compute_weighted_rmse(fc_conv_ds, ds_test.z[72:])
 print(cnn_rmse.compute())
 
 
+"""
 bins_z_avg = [(dg_test.bins_z[i] + dg_test.bins_z[i+1])/2 for i in range(len(dg_test.bins_z)-1)]
 
 fc_arg_avg = fc.argmax(axis = -1)
@@ -272,3 +276,4 @@ fc_conv_ds_avg = xr.Dataset({
 
 cnn_rmse_arg = compute_weighted_rmse(fc_conv_ds_avg, ds_test.z[72:])
 print(cnn_rmse_arg.compute())
+"""
